@@ -1,0 +1,20 @@
+{
+    "domain": "venice_ai",
+    "name": "VeniceAI Conversation",
+    "version": "1.0.0",
+    "documentation": "https://github.com/grasponcrypto/venice_ai",
+    "requirements": ["aiohttp"],
+    "dependencies": [
+        "conversation",
+        "energy",
+        "history",
+        "recorder",
+        "rest",
+        "scrape",
+        "intent",
+        "http"
+    ],
+    "codeowners": ["@grasponcrypto"],
+    "iot_class": "cloud_polling",
+    "config_flow": true
+}
