@@ -1,144 +1,160 @@
+"""Config flow for Venice AI Conversation integration."""
+
 from __future__ import annotations
 
 import logging
+from types import MappingProxyType
+from typing import Any
+
+from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
 import voluptuous as vol
-import aiohttp
-from homeassistant import config_entries
-from homeassistant.const import CONF_API_KEY, CONF_NAME
+
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import llm
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TemplateSelector,
+)
+from homeassistant.helpers.typing import VolDictType
+
 from .const import (
+    CONF_CHAT_MODEL,
+    CONF_MAX_TOKENS,
+    CONF_PROMPT,
+    CONF_REASONING_EFFORT,
+    CONF_RECOMMENDED,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
     DOMAIN,
-    DEFAULT_MODEL,
-    DEFAULT_BASE_URL,
-    CONF_MODEL,
-    CONF_API_KEY,
-    CONF_NAME
+    RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_REASONING_EFFORT,
+    RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_TOP_P,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Define your schema for user input
-STEP_USER_DATA_SCHEMA = vol.Schema({
-    vol.Required(CONF_API_KEY): str,
-    vol.Optional(CONF_NAME, default="Venice AI"): str,
-})
-
-async def fetch_models(api_key: str, base_url: str) -> list:
-    """Fetch the list of models from the Venice AI API."""
-    url = f"{base_url}/models"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
+STEP_USER_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_API_KEY): str,
     }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as response:
-            if response.status == 200:
-                models_data = await response.json()
-                return [model['id'] for model in models_data['data']]  # Adjust based on actual response structure
-            else:
-                _LOGGER.error("Failed to fetch models: %s", await response.text())
-                return []
+)
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
-    """Validate user input."""
-    api_key = data[CONF_API_KEY]
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f"{DEFAULT_BASE_URL}/models",
-            headers={"Authorization": f"Bearer {api_key}"}
-        ) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise ValueError(f"API Error {response.status}: {error_text}")
-
-class VeniceAIConversationConfigFlow(config_entries.ConfigFlow, domain="venice_ai"):
-    """Handle a config flow for Venice AI."""
+class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Venice AI Conversation."""
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Handle the initial step."""
-        errors = {}
-        
-        if user_input is not None:
-            try:
-                await validate_input(self.hass, user_input)
-                return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
-            except ValueError as e:
-                if "API Error" in str(e):
-                    errors["base"] = "invalid_auth"
-                else:
-                    errors["base"] = "unknown"
-                _LOGGER.error("Validation error: %s", e)
-        
-        return self.async_show_form(
-            step_id="user", 
-            data_schema=STEP_USER_DATA_SCHEMA, 
-            errors=errors
-        )
-
-    async def async_step_configure(
+    async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the options step."""
-        errors = {}
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        
-        if user_input is not None:
-            try:
-                # Verify model is valid
-                await self._validate_model(
-                    entry.data[CONF_API_KEY],
-                    entry.data[CONF_BASE_URL],
-                    user_input[CONF_MODEL]
-                )
-                return self.async_create_entry(title="", data=user_input)
-            except ValueError as err:
-                errors["base"] = "invalid_model"
-                _LOGGER.error("Model validation failed: %s", err)
-
-        # Get available models
-        try:
-            models = await self._fetch_models(
-                entry.data[CONF_API_KEY],
-                entry.data[CONF_BASE_URL]
+    ) -> ConfigFlowResult:
+        """Handle the initial step."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="user", data_schema=STEP_USER_DATA_SCHEMA
             )
-        except Exception as err:
-            errors["base"] = "model_fetch_failed"
-            models = []
-            _LOGGER.error("Failed to fetch models: %s", err)
+
+        errors = {}
+
+        try:
+            client = AsyncVeniceAIClient(
+                api_key=user_input[CONF_API_KEY],
+            )
+            await client.models.list()
+
+        except AuthenticationError:
+            errors["base"] = "invalid_auth"
+        except VeniceAIError:
+            errors["base"] = "cannot_connect"
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception")
+            errors["base"] = "unknown"
+        else:
+            return self.async_create_entry(title="Venice AI", data=user_input)
 
         return self.async_show_form(
-            step_id="configure",
-            data_schema=vol.Schema({
-                vol.Required(
-                    CONF_MODEL,
-                    default=entry.options.get(CONF_MODEL, DEFAULT_MODEL)
-                ): vol.In(models) if models else str
-            }),
-            description_placeholders={"note": "⚠️ Models fetched from Venice AI API"},
-            errors=errors
+            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    async def _fetch_models(self, api_key: str, base_url: str) -> list[str]:
-        """Fetch available models from API."""
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{base_url}/models",
-                headers={"Authorization": f"Bearer {api_key}"}
-            ) as response:
-                if response.status != 200:
-                    raise ValueError(f"API Error {response.status}")
-                data = await response.json()
-                return [model["id"] for model in data.get("data", [])]
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> VeniceAIOptionsFlow:
+        """Get the options flow for this handler."""
+        return VeniceAIOptionsFlow(config_entry)
 
-    async def _validate_model(self, api_key: str, base_url: str, model: str) -> None:
-        """Validate model exists in available models."""
-        models = await self._fetch_models(api_key, base_url)
-        if model not in models:
-            raise ValueError(f"Model {model} not in available models: {models}")
 
-    # Optionally, implement an options flow if needed
+class VeniceAIOptionsFlow(OptionsFlow):
+    """Handle options."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle the initial step."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_PROMPT,
+                        description={"suggested_value": self.config_entry.options.get(CONF_PROMPT)},
+                    ): TemplateSelector(),
+                    vol.Optional(
+                        CONF_MAX_TOKENS,
+                        default=self.config_entry.options.get(
+                            CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=4000,
+                            step=1,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_TOP_P,
+                        default=self.config_entry.options.get(
+                            CONF_TOP_P, RECOMMENDED_TOP_P
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            max=1,
+                            step=0.05,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_TEMPERATURE,
+                        default=self.config_entry.options.get(
+                            CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            max=2,
+                            step=0.1,
+                        )
+                    ),
+                }
+            ),
+        )

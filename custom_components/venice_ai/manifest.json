@@ -3,18 +3,11 @@
     "name": "VeniceAI Conversation",
     "version": "1.0.0",
     "documentation": "https://github.com/grasponcrypto/venice_ai",
-    "requirements": ["aiohttp"],
-    "dependencies": [
-        "conversation",
-        "energy",
-        "history",
-        "recorder",
-        "rest",
-        "scrape",
-        "intent",
-        "http"
-    ],
+    "requirements": ["aiohttp>=3.8.0"]
+    "dependencies": ["conversation"],
+    "after_dependencies": ["assist_pipeline", "intent"],
     "codeowners": ["@grasponcrypto"],
     "iot_class": "cloud_polling",
+    "integration_type": "service",
     "config_flow": true
 }

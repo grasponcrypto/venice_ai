@@ -1,14 +1,40 @@
-generate_response:
-  description: Generate a response using Venice AI
+generate_image:
   fields:
-    prompt:
-      description: The input text/prompt
+    config_entry:
       required: true
-      example: "What is the average airspeed of an unladen swallow?"
-    model:
-      description: Model to use for generation
+      selector:
+        config_entry:
+          integration: venice_ai
+    prompt:
+      required: true
+      selector:
+        text:
+          multiline: true
+    size:
       required: false
-      example: "llama-3.2-3B"
-  response:
-    description: The generated response
-    example: "The average airspeed of an unladen swallow is 13 to 14 meters per second." 
+      example: "1024x1024"
+      default: "1024x1024"
+      selector:
+        select:
+          options:
+            - "1024x1024"
+            - "1024x1792"
+            - "1792x1024"
+    quality:
+      required: false
+      example: "standard"
+      default: "standard"
+      selector:
+        select:
+          options:
+            - "standard"
+            - "hd"
+    style:
+      required: false
+      example: "vivid"
+      default: "vivid"
+      selector:
+        select:
+          options:
+            - "vivid"
+            - "natural"

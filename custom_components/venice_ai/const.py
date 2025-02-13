@@ -1,9 +1,25 @@
-# custom_components/venice_ai/const.py
+"""Constants for the Venice AI Conversation integration."""
 
-from homeassistant.const import CONF_API_KEY, CONF_NAME
+import logging
 
 DOMAIN = "venice_ai"
-CONF_API_KEY = "api_key"
-CONF_MODEL = "model"
-DEFAULT_MODEL = "llama-3.2-3b"
-DEFAULT_BASE_URL = "https://api.venice.ai/api/v1"
+LOGGER = logging.getLogger(__package__)
+
+CONF_RECOMMENDED = "recommended"
+CONF_PROMPT = "prompt"
+CONF_CHAT_MODEL = "chat_model"
+RECOMMENDED_CHAT_MODEL = "default"  # Venice AI uses "default" as their model name
+CONF_MAX_TOKENS = "max_tokens"
+RECOMMENDED_MAX_TOKENS = 150
+CONF_TOP_P = "top_p"
+RECOMMENDED_TOP_P = 1.0
+CONF_TEMPERATURE = "temperature"
+RECOMMENDED_TEMPERATURE = 1.0
+
+# Venice AI doesn't use reasoning_effort, but we'll keep the config option
+# for compatibility
+CONF_REASONING_EFFORT = "reasoning_effort"
+RECOMMENDED_REASONING_EFFORT = "low"
+
+# Venice AI doesn't have unsupported models list currently
+UNSUPPORTED_MODELS = []
