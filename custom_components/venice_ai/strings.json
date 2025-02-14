@@ -1,0 +1,45 @@
+{
+    "config": {
+      "step": {
+        "user": {
+          "title": "Venice AI Setup",
+          "data": {
+            "api_key": "Venice AI API Key"
+          }
+        }
+      },
+      "error": {
+        "invalid_auth": "Invalid API key",
+        "cannot_connect": "Failed to connect to Venice AI",
+        "unknown": "Unexpected error"
+      },
+      "abort": {
+        "already_configured": "Venice AI is already configured"
+      }
+    },
+    "options": {
+      "step": {
+        "init": {
+          "title": "Venice AI Options",
+          "data": {
+            "prompt": "System Prompt (leave empty for default)",
+            "max_tokens": "Maximum response length",
+            "temperature": "Response creativity (0-2)",
+            "top_p": "Response focus (0-1)"
+          }
+        }
+      }
+    },
+    "services": {
+      "generate_image": {
+        "name": "Generate Image",
+        "description": "Generate an image using Venice AI.",
+        "fields": {
+          "prompt": "Image description",
+          "size": "Image size",
+          "quality": "Image quality",
+          "style": "Image style"
+        }
+      }
+    }
+  }
