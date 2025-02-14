@@ -1,13 +1,3 @@
 {
-  "name": "Venice AI",
-  "repository": "grasponcrypto/venice_ai",
-  "version": "1.0.0",
-  "slug": "venice_ai",
-  "description": "Home Assistant Venice AI Conversation Integration",
-  "homepage": "https://github.com/grasponcrypto/venice_ai",
-  "issues": "https://github.com/grasponcrypto/venice_ai/issues",
-  "license": "MIT",
-  "support": "https://github.com/grasponcrypto/venice_ai/issues",
-  "dependencies": [],
-  "topics": ["home-assistant", "venice-ai", "integration"]
+  "name": "Venice AI"
 } 
