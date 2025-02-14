@@ -9,6 +9,5 @@
   "license": "MIT",
   "support": "https://github.com/grasponcrypto/venice_ai/issues",
   "dependencies": [],
-  "codeowners": ["@grasponcrypto"],
   "topics": ["home-assistant", "venice-ai", "integration"]
 } 
