@@ -3,7 +3,7 @@
     "name": "VeniceAI Conversation",
     "version": "1.0.0",
     "documentation": "https://github.com/grasponcrypto/venice_ai",
-    "requirements": ["aiohttp>=3.8.0"]
+    "requirements": ["aiohttp>=3.8.0"],
     "dependencies": ["conversation"],
     "after_dependencies": ["assist_pipeline", "intent"],
     "codeowners": ["@grasponcrypto"],
