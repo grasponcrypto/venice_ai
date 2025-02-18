@@ -17,7 +17,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import llm
+from homeassistant.helpers import llm, selector
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -102,59 +102,67 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
+        super().__init__()
         self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step."""
+        errors = {}
+        models = []
+
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        try:
+            # Get the client from the config entry's runtime data
+            client: AsyncVeniceAIClient = self.config_entry.runtime_data
+            models_response = await client.models.list()
+            
+            # Process models from the API response
+            models = [
+                {
+                    "value": model["id"],
+                    "label": f"{model.get('name', model['id'])} ({model['id']})",
+                    "disabled": not model.get("model_spec", {}).get("available", True)
+                }
+                for model in models_response.get("data", [])
+            ]
+            
+            # Sort models by label
+            models.sort(key=lambda x: x["label"])
+
+        except Exception as err:
+            _LOGGER.error("Error fetching models: %s", err, exc_info=True)
+            errors["base"] = "cannot_connect"
+            models = [{"value": "default", "label": "Default Model", "disabled": False}]
+
+        # Always include the default model as a fallback
+        if not any(model["value"] == "default" for model in models):
+            models.insert(0, {"value": "default", "label": "Default Model", "disabled": False})
+
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_PROMPT,
-                        description={"suggested_value": self.config_entry.options.get(CONF_PROMPT)},
-                    ): TemplateSelector(),
-                    vol.Optional(
-                        CONF_MAX_TOKENS,
-                        default=self.config_entry.options.get(
-                            CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=1,
-                            max=4000,
-                            step=1,
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_TOP_P,
-                        default=self.config_entry.options.get(
-                            CONF_TOP_P, RECOMMENDED_TOP_P
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=0,
-                            max=1,
-                            step=0.05,
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_TEMPERATURE,
-                        default=self.config_entry.options.get(
-                            CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=0,
-                            max=2,
-                            step=0.1,
-                        )
-                    ),
-                }
-            ),
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_CHAT_MODEL,
+                    default=self.config_entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": model["value"], "label": model["label"]}
+                            for model in models
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+            }),
+            errors=errors,
+            description_placeholders={
+                "models_info": "\n".join(
+                    f"• {model['label']} {'(unavailable)' if model['disabled'] else ''}"
+                    for model in models
+                )
+            }
         )
