@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 from typing import Any, AsyncGenerator, cast
+import time
 
-import aiohttp
+import httpx
 
 class VeniceAIError(Exception):
     """Base exception for Venice AI errors."""
@@ -53,60 +54,65 @@ class ChatCompletions:
         if venice_parameters is not None:
             data["venice_parameters"] = venice_parameters
 
-        response = await self.client._http_client.post(
-            f"{self.client._base_url}/chat/completions",
-            headers=self.client._headers,
-            json=data,
-            timeout=300.0,
-        )
-
-        if response.status_code == 401:
-            raise AuthenticationError("Invalid API key")
-        if response.status_code != 200:
-            text = await response.aread()
-            raise VeniceAIError(f"Error {response.status_code}: {text.decode()}")
-
-        async for line in response.aiter_lines():
-            line = line.strip()
-            if not line or line == "data: [DONE]":
-                continue
-            if not line.startswith("data: "):
-                continue
-            data = json.loads(line[6:])
-            yield ChatCompletionChunk(data)
-
-        await response.aclose()
+        try:
+            async with self.client._http_client.stream(
+                "POST",
+                f"{self.client._base_url}/chat/completions",
+                headers=self.client._headers,
+                json=data,
+                timeout=300.0
+            ) as response:
+                response.raise_for_status()
+                
+                async for line in response.aiter_lines():
+                    if line.strip() and line != "data: [DONE]":
+                        yield ChatCompletionChunk(json.loads(line[6:]))
+                        
+        except httpx.HTTPStatusError as err:
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key") from err
+            raise VeniceAIError(f"HTTP error {err.response.status_code}") from err
 
 
 class AsyncVeniceAIClient:
-    """Async client for the Venice AI API."""
+    """Async client for the Venice AI API using httpx."""
 
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.venice.ai/v1",
-        http_client: aiohttp.ClientSession | None = None,
+        base_url: str = "https://api.venice.ai/api/v1",
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the client."""
         self._api_key = api_key
-        self._base_url = base_url
-        self._http_client = http_client or aiohttp.ClientSession()
+        self._base_url = base_url.rstrip("/")
+        self._http_client = http_client or httpx.AsyncClient()
         self._headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         self.chat = ChatCompletions(self)
+        self.models = Models(self)
+        self._models_cache = None
+        self._models_cache_time = 0
 
     async def close(self) -> None:
         """Close the client."""
-        await self._http_client.close()
+        await self._http_client.aclose()
 
 class Models:
-    """Models API stub for compatibility."""
+    """Models API for Venice AI."""
     
-    async def list(self):
-        """List available models."""
-        return {"data": [{"id": "default"}]}
+    def __init__(self, client: AsyncVeniceAIClient) -> None:
+        """Initialize models API."""
+        self.client = client
 
-# Add models to the client
-AsyncVeniceAIClient.models = Models() 
+    async def list(self) -> list[dict]:
+        """List available models."""
+        response = await self.client._http_client.get(
+            f"{self.client._base_url}/models",
+            headers=self.client._headers,
+            params={"type": "text"}
+        )
+        response.raise_for_status()
+        return response.json().get("data", []) 

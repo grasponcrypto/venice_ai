@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Callable
 import json
 from typing import Any, Literal, cast
 import re
+from datetime import datetime
 
 from .client import AsyncVeniceAIClient, VeniceAIError, ChatCompletionChunk
 from .const import (
@@ -28,6 +29,9 @@ from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, intent, llm
+from homeassistant.helpers.entity import Entity
+from homeassistant.util import dt as dt_util
+import logging
 
 # Max number of back and forth with the LLM to generate a response
 MAX_TOOL_ITERATIONS = 10
@@ -62,6 +66,8 @@ light.office
 
 Keep responses concise but informative.
 """
+
+_LOGGER = logging.getLogger(__name__)
 
 class VeniceAIConversationEntity(conversation.ConversationEntity):
     """Venice AI conversation entity."""
@@ -98,23 +104,19 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
     ) -> conversation.ConversationResult:
         """Process a sentence."""
         options = dict(self.entry.options)
-
         prompt = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
         
         # Get only exposed entities through the conversation agent
         exposed_entities = []
         for state in self.hass.states.async_all():
-            # Filter entities that are exposed to the conversation agent
             if state.attributes.get("conversation_agent_exposed", False):
                 exposed_entities.append(state)
         
-        # Format entities text with only exposed entities
         entities_text = "\n".join(
             f"- {state.entity_id}: {state.state}" 
             for state in exposed_entities
         )
         
-        # Get available services (synchronous call)
         services = self.hass.services.async_services()
         services_text = []
         for domain, domain_services in services.items():
@@ -124,7 +126,6 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                     service_desc += f": {service.description}"
                 services_text.append(service_desc)
         
-        # Build the system message with HA context
         system_message = (
             f"{prompt}\n\n"
             "Available Home Assistant entities and their states:\n"
@@ -138,10 +139,6 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
             {"role": "user", "content": user_input.text},
         ]
 
-        # Add debug logging
-        LOGGER.debug("System message sent to Venice AI:\n%s", system_message)
-        LOGGER.debug("User input: %s", user_input.text)
-
         try:
             response_generator = self.entry_data.chat.create(
                 model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
@@ -152,7 +149,6 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 venice_parameters={"include_venice_system_prompt": False},
             )
             
-            # Collect the full response
             full_response = ""
             async for chunk in response_generator:
                 if chunk.choices and chunk.choices[0].get("message", {}).get("content"):
@@ -160,13 +156,11 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 elif chunk.choices and chunk.choices[0].get("delta", {}).get("content"):
                     full_response += chunk.choices[0]["delta"]["content"]
 
-            # Add response debug
-            LOGGER.debug("Full Venice AI response: %s", full_response)
-
         except VeniceAIError as err:
             raise HomeAssistantError(f"Error processing with Venice AI: {err}") from err
 
-        # Parse and execute service calls
+        # Split response into user message and service calls
+        user_message = full_response
         service_call_match = re.search(
             r"service_call\s+([\w\.]+)\s+([\w\.]+)",
             full_response,
@@ -174,55 +168,44 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         )
         
         if service_call_match:
+            # Extract the user-facing message (everything before service_call)
+            user_message = re.split(r"service_call", full_response, flags=re.IGNORECASE)[0].strip()
+            
             try:
                 service_full, entity_id = service_call_match.groups()
                 domain, service = service_full.split(".", 1)
                 
-                # Debug logging
-                LOGGER.debug("Attempting service call with: domain=%s, service=%s, entity_id=%s", 
-                            domain, service, entity_id)
-                
-                # Verify entity exists
                 if not self.hass.states.get(entity_id):
-                    LOGGER.error("Entity %s not found. Available entities: %s", 
-                                entity_id, 
-                                [state.entity_id for state in self.hass.states.async_all() 
-                                 if state.entity_id.startswith(domain + ".")])
                     raise ValueError(f"Entity {entity_id} not found")
                 
-                # Make the service call
                 await self.hass.services.async_call(
                     domain,
                     service,
                     {"entity_id": entity_id},
                     blocking=True,
                 )
-                LOGGER.info("Executed service: %s.%s on %s", domain, service, entity_id)
                 
-                # Clean the response text
-                full_response = re.sub(r"service_call.*?$", "", full_response, flags=re.MULTILINE).strip()
-                full_response += f"\n\nSuccessfully executed {service_full} on {entity_id}"
+                # Don't append success message to user response
+                LOGGER.debug("Successfully executed %s.%s on %s", domain, service, entity_id)
                 
             except Exception as err:
                 LOGGER.error("Service call failed: %s", err)
-                # Add available entities to error message
+                # Add error to user message only if something went wrong
                 available_entities = [
                     state.entity_id 
                     for state in self.hass.states.async_all() 
                     if state.entity_id.startswith(domain + ".")
                 ]
+                user_message += f"\nSorry, I couldn't do that: {str(err)}"
                 LOGGER.error("Available %s entities: %s", domain, available_entities)
-                full_response += f"\n\nError executing action: {str(err)}\nAvailable {domain} entities: {', '.join(available_entities)}"
 
-        # Process the response through the conversation agent
         intent_response = intent.IntentResponse(language=user_input.language)
-        intent_response.async_set_speech(full_response)
+        intent_response.async_set_speech(user_message)
         
         return conversation.ConversationResult(
             response=intent_response,
             conversation_id=user_input.conversation_id,
         )
-
 
 async def async_setup_entry(
     hass: HomeAssistant,

@@ -103,42 +103,35 @@ class VeniceAIOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__()
-        self.config_entry = config_entry
+        self._entry = config_entry
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle the initial step."""
-        errors = {}
-        models = []
-
+    async def async_step_init(self, user_input=None):
+        """Handle options initialization."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        client: AsyncVeniceAIClient = self._entry.runtime_data
+        errors = {}
+        models = []
+
         try:
-            # Get the client from the config entry's runtime data
-            client: AsyncVeniceAIClient = self.config_entry.runtime_data
-            models_response = await client.models.list()
-            
-            # Process models from the API response
+            # Simple one-time fetch when user clicks configure
+            models_response = await client.models.list()  # This now returns the "data" array
             models = [
                 {
                     "value": model["id"],
                     "label": f"{model.get('name', model['id'])} ({model['id']})",
-                    "disabled": not model.get("model_spec", {}).get("available", True)
+                    "disabled": not model.get("model_spec", {}).get("traits", [])  # Check if model has any traits
                 }
-                for model in models_response.get("data", [])
+                for model in models_response
             ]
-            
-            # Sort models by label
             models.sort(key=lambda x: x["label"])
 
         except Exception as err:
-            _LOGGER.error("Error fetching models: %s", err, exc_info=True)
+            _LOGGER.error("Error fetching models: %s", err)
             errors["base"] = "cannot_connect"
             models = [{"value": "default", "label": "Default Model", "disabled": False}]
 
-        # Always include the default model as a fallback
         if not any(model["value"] == "default" for model in models):
             models.insert(0, {"value": "default", "label": "Default Model", "disabled": False})
 
@@ -147,7 +140,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
             data_schema=vol.Schema({
                 vol.Required(
                     CONF_CHAT_MODEL,
-                    default=self.config_entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+                    default=self._entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
@@ -158,11 +151,5 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     )
                 )
             }),
-            errors=errors,
-            description_placeholders={
-                "models_info": "\n".join(
-                    f"• {model['label']} {'(unavailable)' if model['disabled'] else ''}"
-                    for model in models
-                )
-            }
+            errors=errors
         )
