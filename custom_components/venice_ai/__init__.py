@@ -28,7 +28,10 @@ SERVICE_GENERATE_IMAGE = "generate_image"
 PLATFORMS = (Platform.CONVERSATION,)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-type VeniceAIConfigEntry = ConfigEntry[AsyncVeniceAIClient]
+class VeniceAIConfigEntry(ConfigEntry):
+    """Venice AI config entry with runtime data."""
+    
+    runtime_data: AsyncVeniceAIClient
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -91,8 +94,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     """Set up Venice AI Conversation from a config entry."""
     client = AsyncVeniceAIClient(
         api_key=entry.data[CONF_API_KEY],
-        base_url="https://api.venice.ai/api/v1",
         http_client=get_async_client(hass),
+        base_url="https://api.venice.ai/api/v1"
     )
 
     try:
@@ -103,10 +106,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     except VeniceAIError as err:
         raise ConfigEntryNotReady(err) from err
 
+    # Store client in runtime_data
     entry.runtime_data = client
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     return True
 
 

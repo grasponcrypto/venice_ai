@@ -21,11 +21,11 @@
       "step": {
         "init": {
           "title": "Venice AI Options",
+          "description": "Configure Venice AI settings\n\nAvailable models:\n{models_info}",
           "data": {
             "prompt": "System Prompt (leave empty for default)",
-            "max_tokens": "Maximum response length",
             "temperature": "Response creativity (0-2)",
-            "top_p": "Response focus (0-1)"
+            "chat_model": "AI Model"
           }
         }
       }
