@@ -75,7 +75,7 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
     _attr_should_expose = True
     _attr_has_entity_name = True
     _attr_name = None
-
+    
     def __init__(
         self,
         entry: ConfigEntry,
@@ -86,6 +86,8 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         self.entry = entry
         self.entry_data = entry_data
         self._attr_unique_id = entry.entry_id
+        # Store conversation history by conversation_id
+        self._conversation_history = {}
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -105,6 +107,11 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         """Process a sentence."""
         options = dict(self.entry.options)
         prompt = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
+        
+        # Get conversation history or initialize new conversation
+        conversation_id = user_input.conversation_id
+        if conversation_id not in self._conversation_history:
+            self._conversation_history[conversation_id] = []
         
         # Get only exposed entities through the conversation agent
         exposed_entities = []
@@ -134,10 +141,16 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
             f"{chr(10).join(services_text)}"
         )
 
+        # Build messages array with system message and conversation history
         messages = [
             {"role": "system", "content": system_message},
-            {"role": "user", "content": user_input.text},
         ]
+        
+        # Add conversation history
+        messages.extend(self._conversation_history[conversation_id])
+        
+        # Add current user message
+        messages.append({"role": "user", "content": user_input.text})
 
         try:
             response_generator = self.entry_data.chat.create(
@@ -198,6 +211,18 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 ]
                 user_message += f"\nSorry, I couldn't do that: {str(err)}"
                 LOGGER.error("Available %s entities: %s", domain, available_entities)
+
+        # Store the exchange in conversation history
+        self._conversation_history[conversation_id].append(
+            {"role": "user", "content": user_input.text}
+        )
+        self._conversation_history[conversation_id].append(
+            {"role": "assistant", "content": user_message}
+        )
+        
+        # Limit conversation history to last 10 exchanges (20 messages)
+        if len(self._conversation_history[conversation_id]) > 20:
+            self._conversation_history[conversation_id] = self._conversation_history[conversation_id][-20:]
 
         intent_response = intent.IntentResponse(language=user_input.language)
         intent_response.async_set_speech(user_message)
