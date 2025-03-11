@@ -28,7 +28,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr, intent, llm
+from homeassistant.helpers import device_registry as dr, intent, llm, area_registry, entity_registry
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import dt as dt_util
 import logging
@@ -113,15 +113,61 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         if conversation_id not in self._conversation_history:
             self._conversation_history[conversation_id] = []
         
-        # Get only exposed entities through the conversation agent
+        # Get registries
+        ent_reg = entity_registry.async_get(self.hass)
+        area_reg = area_registry.async_get(self.hass)
+        dev_reg = dr.async_get(self.hass)
+
+        # Get exposed entities with rich information
         exposed_entities = []
         for state in self.hass.states.async_all():
-            if state.attributes.get("conversation_agent_exposed", False):
-                exposed_entities.append(state)
-        
+            entity_id = state.entity_id
+            
+            # Skip hidden entities and non-exposed entities
+            if (
+                state.attributes.get("hidden", False)
+                or not state.attributes.get("conversation_agent_exposed", False)
+            ):
+                continue
+
+            # Get entity registry entry for additional info
+            if entry := ent_reg.async_get(entity_id):
+                # Get area information
+                area_name = None
+                if entry.area_id and (area := area_reg.async_get_area(entry.area_id)):
+                    area_name = area.name
+
+                # Get device information
+                device_name = None
+                if entry.device_id and (device := dev_reg.async_get_device(entry.device_id)):
+                    device_name = device.name_by_user or device.name
+
+                entity_info = {
+                    "entity_id": entity_id,
+                    "name": entry.name or state.name or entity_id,
+                    "state": state.state,
+                    "area": area_name,
+                    "device": device_name,
+                    "domain": entry.domain,
+                }
+            else:
+                # Fallback for entities not in registry
+                entity_info = {
+                    "entity_id": entity_id,
+                    "name": state.name or entity_id,
+                    "state": state.state,
+                    "domain": entity_id.split(".")[0],
+                }
+
+            exposed_entities.append(entity_info)
+
+        # Format entities text with rich information
         entities_text = "\n".join(
-            f"- {state.entity_id}: {state.state}" 
-            for state in exposed_entities
+            f"- {entity['entity_id']}: {entity['state']} "
+            f"({entity['name']}"
+            f"{f' in {entity['area']}' if entity.get('area') else ''}"
+            f"{f' on {entity['device']}' if entity.get('device') else ''})"
+            for entity in exposed_entities
         )
         
         services = self.hass.services.async_services()
@@ -199,10 +245,10 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 )
                 
                 # Don't append success message to user response
-                LOGGER.debug("Successfully executed %s.%s on %s", domain, service, entity_id)
+                _LOGGER.debug("Successfully executed %s.%s on %s", domain, service, entity_id)
                 
             except Exception as err:
-                LOGGER.error("Service call failed: %s", err)
+                _LOGGER.error("Service call failed: %s", err)
                 # Add error to user message only if something went wrong
                 available_entities = [
                     state.entity_id 
@@ -210,7 +256,7 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                     if state.entity_id.startswith(domain + ".")
                 ]
                 user_message += f"\nSorry, I couldn't do that: {str(err)}"
-                LOGGER.error("Available %s entities: %s", domain, available_entities)
+                _LOGGER.error("Available %s entities: %s", domain, available_entities)
 
         # Store the exchange in conversation history
         self._conversation_history[conversation_id].append(
