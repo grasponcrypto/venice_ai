@@ -53,6 +53,16 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     }
 )
 
+RECOMMENDED_OPTIONS = {
+    CONF_RECOMMENDED: True,
+    CONF_LLM_HASS_API: llm.LLM_API_ASSIST,
+    CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
+    CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
+    CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
+    CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
+    CONF_TOP_P: RECOMMENDED_TOP_P,
+}
+
 class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Venice AI Conversation."""
 
@@ -74,7 +84,6 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 api_key=user_input[CONF_API_KEY],
             )
             await client.models.list()
-
         except AuthenticationError:
             errors["base"] = "invalid_auth"
         except VeniceAIError:
@@ -83,7 +92,11 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
-            return self.async_create_entry(title="Venice AI", data=user_input)
+            return self.async_create_entry(
+                title="Venice AI",
+                data=user_input,
+                options=RECOMMENDED_OPTIONS,
+            )
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
@@ -96,60 +109,129 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         """Get the options flow for this handler."""
         return VeniceAIOptionsFlow(config_entry)
 
-
 class VeniceAIOptionsFlow(OptionsFlow):
     """Handle options."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
-        super().__init__()
-        self._entry = config_entry
+        self._config_entry = config_entry
 
-    async def async_step_init(self, user_input=None):
-        """Handle options initialization."""
+    async def _fetch_models(self) -> list[SelectOptionDict]:
+        """Fetch available models from Venice AI."""
+        try:
+            client = self._config_entry.runtime_data
+            models = await client.models.list()
+            return [
+                SelectOptionDict(
+                    value=model["id"],
+                    label=model.get("name", model["id"])
+                )
+                for model in models
+            ]
+        except Exception as err:
+            _LOGGER.error("Failed to fetch models: %s", err)
+            return [
+                SelectOptionDict(
+                    value=RECOMMENDED_CHAT_MODEL,
+                    label=f"Default ({RECOMMENDED_CHAT_MODEL})"
+                )
+            ]
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle options flow."""
         if user_input is not None:
+            if user_input.get(CONF_LLM_HASS_API) == "none":
+                user_input.pop(CONF_LLM_HASS_API, None)
+            if CONF_LLM_HASS_API in user_input and user_input[CONF_LLM_HASS_API] not in [api.id for api in llm.async_get_apis(self.hass)] + ["none"]:
+                _LOGGER.warning("Invalid LLM API ID '%s' provided; removing", user_input[CONF_LLM_HASS_API])
+                user_input.pop(CONF_LLM_HASS_API, None)
             return self.async_create_entry(title="", data=user_input)
 
-        client: AsyncVeniceAIClient = self._entry.runtime_data
-        errors = {}
-        models = []
+        model_options = await self._fetch_models()
+        apis: list[SelectOptionDict] = [
+            SelectOptionDict(
+                label="No control (disable entity control)",
+                value="none",
+            )
+        ]
+        apis.extend(
+            SelectOptionDict(
+                label=api.name,
+                value=api.id,
+            )
+            for api in llm.async_get_apis(self.hass)
+        )
 
-        try:
-            # Simple one-time fetch when user clicks configure
-            models_response = await client.models.list()  # This now returns the "data" array
-            models = [
-                {
-                    "value": model["id"],
-                    "label": f"{model.get('name', model['id'])} ({model['id']})",
-                    "disabled": not model.get("model_spec", {}).get("traits", [])  # Check if model has any traits
-                }
-                for model in models_response
-            ]
-            models.sort(key=lambda x: x["label"])
+        current_llm_api = self._config_entry.options.get(CONF_LLM_HASS_API, llm.LLM_API_ASSIST)
+        if current_llm_api and current_llm_api not in [api["value"] for api in apis]:
+            _LOGGER.debug("Current LLM_HASS_API '%s' is invalid; defaulting to '%s'", current_llm_api, llm.LLM_API_ASSIST)
+            current_llm_api = llm.LLM_API_ASSIST
 
-        except Exception as err:
-            _LOGGER.error("Error fetching models: %s", err)
-            errors["base"] = "cannot_connect"
-            models = [{"value": "default", "label": "Default Model", "disabled": False}]
-
-        if not any(model["value"] == "default" for model in models):
-            models.insert(0, {"value": "default", "label": "Default Model", "disabled": False})
+        schema = {
+            vol.Optional(
+                CONF_CHAT_MODEL,
+                default=self._config_entry.options.get(
+                    CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL
+                ),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=model_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_MAX_TOKENS,
+                default=self._config_entry.options.get(
+                    CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=1, max=4096, step=1
+                )
+            ),
+            vol.Optional(
+                CONF_TEMPERATURE,
+                default=self._config_entry.options.get(
+                    CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=2, step=0.1
+                )
+            ),
+            vol.Optional(
+                CONF_TOP_P,
+                default=self._config_entry.options.get(
+                    CONF_TOP_P, RECOMMENDED_TOP_P
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=1, step=0.1
+                )
+            ),
+            vol.Optional(
+                CONF_PROMPT,
+                default=self._config_entry.options.get(
+                    CONF_PROMPT, llm.DEFAULT_INSTRUCTIONS_PROMPT
+                ),
+            ): TemplateSelector(),
+            vol.Optional(
+                "debug_logging",
+                default=self._config_entry.options.get("debug_logging", False),
+            ): bool,
+            vol.Optional(
+                CONF_LLM_HASS_API,
+                description={
+                    "suggested_value": current_llm_api,
+                    "description": "Select the LLM API to use for controlling Home Assistant entities."
+                },
+                default=llm.LLM_API_ASSIST,
+            ): SelectSelector(SelectSelectorConfig(options=apis, mode=SelectSelectorMode.DROPDOWN)),
+        }
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(
-                    CONF_CHAT_MODEL,
-                    default=self._entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            {"value": model["value"], "label": model["label"]}
-                            for model in models
-                        ],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                )
-            }),
-            errors=errors
+            data_schema=vol.Schema(schema),
         )

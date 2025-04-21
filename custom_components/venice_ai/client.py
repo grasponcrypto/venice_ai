@@ -10,10 +10,8 @@ import httpx
 class VeniceAIError(Exception):
     """Base exception for Venice AI errors."""
 
-
 class AuthenticationError(VeniceAIError):
     """Authentication error."""
-
 
 class ChatCompletionChunk:
     """Chat completion chunk."""
@@ -21,7 +19,6 @@ class ChatCompletionChunk:
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize chat completion chunk."""
         self.choices = data.get("choices", [])
-
 
 class ChatCompletions:
     """Chat completions API."""
@@ -33,17 +30,20 @@ class ChatCompletions:
     async def create(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],  # Updated to Any for tool_calls
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         venice_parameters: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        stream: bool = True,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Create a chat completion."""
         data = {
             "model": model,
             "messages": messages,
-            "stream": True,
+            "stream": stream,
         }
         if max_tokens is not None:
             data["max_tokens"] = max_tokens
@@ -53,6 +53,10 @@ class ChatCompletions:
             data["top_p"] = top_p
         if venice_parameters is not None:
             data["venice_parameters"] = venice_parameters
+        if tools is not None:
+            data["tools"] = tools
+        if tool_choice is not None:
+            data["tool_choice"] = tool_choice
 
         try:
             async with self.client._http_client.stream(
@@ -72,7 +76,6 @@ class ChatCompletions:
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key") from err
             raise VeniceAIError(f"HTTP error {err.response.status_code}") from err
-
 
 class AsyncVeniceAIClient:
     """Async client for the Venice AI API using httpx."""
@@ -115,4 +118,4 @@ class Models:
             params={"type": "text"}
         )
         response.raise_for_status()
-        return response.json().get("data", []) 
+        return response.json().get("data", [])
