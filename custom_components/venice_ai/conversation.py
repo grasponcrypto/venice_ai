@@ -26,6 +26,8 @@ from .const import (
     CONF_PROMPT,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_STRIP_THINKING_RESPONSE,
+    CONF_DISABLE_THINKING,
     DOMAIN,
     LOGGER, # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -163,6 +165,26 @@ def _convert_to_venice_message(msg: SystemContent | UserContent | AssistantConte
 
 # --- End Helper Functions ---
 
+def _build_model_name(base_model: str, options: dict[str, Any]) -> str:
+    """Build the model name with reasoning options suffixes."""
+    model_name = base_model
+
+    # Check if we need to add suffixes
+    strip_thinking = options.get(CONF_STRIP_THINKING_RESPONSE, False)
+    disable_thinking = options.get(CONF_DISABLE_THINKING, False)
+
+    if strip_thinking or disable_thinking:
+        suffixes = []
+        if disable_thinking:
+            suffixes.append("disable_thinking=true")
+        if strip_thinking:
+            suffixes.append("strip_thinking_response=true")
+
+        if suffixes:
+            model_name = f"{base_model}:{'&'.join(suffixes)}"
+
+    return model_name
+
 
 # --- Inherit from ConversationEntity ---
 class VeniceAIConversationEntity(ConversationEntity):
@@ -288,7 +310,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                  _LOGGER.debug("Messages to be sent: %s", json.dumps(next_api_request_messages[-10:], indent=2)) # Log last 10
 
                  api_request_payload = {
-                      "model": options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+                      "model": _build_model_name(
+                          options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+                          options
+                      ),
                       "messages": next_api_request_messages, # Send current message list
                       "max_tokens": options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
                       "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),

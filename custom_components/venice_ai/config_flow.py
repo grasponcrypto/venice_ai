@@ -18,6 +18,7 @@ from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, llm, selector
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     SelectOptionDict,
@@ -36,6 +37,8 @@ from .const import (
     # CONF_REASONING_EFFORT, # Not used by Venice
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_STRIP_THINKING_RESPONSE,
+    CONF_DISABLE_THINKING,
     DOMAIN,
     LOGGER, # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -103,6 +106,8 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
                     CONF_TOP_P: RECOMMENDED_TOP_P,
                     CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
+                    CONF_STRIP_THINKING_RESPONSE: False,
+                    CONF_DISABLE_THINKING: False,
                 }
                 return self.async_create_entry(
                     title="Venice AI", data=user_input, options=initial_options
@@ -135,7 +140,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
         # Client instance should be fetched from runtime_data if possible
         self._client: AsyncVeniceAIClient | None = config_entry.runtime_data
 
@@ -249,6 +253,15 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 # Use string literal "box" for mode
                 NumberSelectorConfig(min=1, step=1, mode="box") # Allow integer input
             ),
+            # --- Reasoning Model Options ---
+            vol.Optional(
+                CONF_STRIP_THINKING_RESPONSE,
+                default=self.config_entry.options.get(CONF_STRIP_THINKING_RESPONSE, False)
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_DISABLE_THINKING,
+                default=self.config_entry.options.get(CONF_DISABLE_THINKING, False)
+            ): BooleanSelector(),
             # --- LLM HASS API Selection ---
             vol.Optional(
                 CONF_LLM_HASS_API,

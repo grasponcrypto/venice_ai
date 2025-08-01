@@ -21,5 +21,9 @@ RECOMMENDED_TEMPERATURE = 1.0
 CONF_REASONING_EFFORT = "reasoning_effort"
 RECOMMENDED_REASONING_EFFORT = "low"
 
+# Venice AI reasoning model options
+CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
+CONF_DISABLE_THINKING = "disable_thinking"
+
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []

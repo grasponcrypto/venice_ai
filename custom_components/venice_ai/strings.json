@@ -25,7 +25,9 @@
           "data": {
             "prompt": "System Prompt (leave empty for default)",
             "temperature": "Response creativity (0-2)",
-            "chat_model": "AI Model"
+            "chat_model": "AI Model",
+            "strip_thinking_response": "Strip thinking response (for reasoning models)",
+            "disable_thinking": "Disable thinking (for some reasoning models)"
           }
         }
       }
