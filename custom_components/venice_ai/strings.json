@@ -21,13 +21,16 @@
       "step": {
         "init": {
           "title": "Venice AI Options",
-          "description": "Configure Venice AI settings\n\nAvailable models:\n{models_info}",
+          "description": "Configure Venice AI settings. Only models with function calling support are shown.",
           "data": {
-            "prompt": "System Prompt (leave empty for default)",
-            "temperature": "Response creativity (0-2)",
             "chat_model": "AI Model",
+            "prompt": "System Prompt",
+            "temperature": "Temperature (0-2)",
+            "top_p": "Top P (0-1)",
+            "max_tokens": "Max Tokens",
             "strip_thinking_response": "Strip thinking response (for reasoning models)",
-            "disable_thinking": "Disable thinking (for some reasoning models)"
+            "disable_thinking": "Disable thinking (for reasoning models)",
+            "llm_hass_api": "Home Assistant LLM API"
           }
         }
       }

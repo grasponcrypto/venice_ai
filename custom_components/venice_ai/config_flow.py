@@ -77,15 +77,13 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             # Validate the API key
-            client = None # Define client before try block
             try:
                 # Use a temporary client instance for validation
-                # Consider adding base_url if needed by client constructor
-                client = AsyncVeniceAIClient(
-                    api_key=user_input[CONF_API_KEY],
-                    # http_client=get_async_client(self.hass), # Might need hass here if client requires http_client
-                )
-                await client.models.list() # Simple API call to check auth
+                client = AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY])
+                models_response = await client.models.list()
+                # Verify we got a valid response - it should be a list of models
+                if not models_response or not isinstance(models_response, list):
+                    raise VeniceAIError("Invalid models response")
 
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
@@ -98,9 +96,8 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 # API key is valid, create the entry.
-                # Set default options here, especially for LLM API
                 initial_options = {
-                    CONF_LLM_HASS_API: None, # Default to no HA LLM API initially
+                    CONF_LLM_HASS_API: None,
                     CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
                     CONF_PROMPT: DEFAULT_SYSTEM_PROMPT,
                     CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
@@ -112,16 +109,6 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title="Venice AI", data=user_input, options=initial_options
                 )
-            finally:
-                 # Ensure temporary client is closed if it has an async close method
-                 if client and hasattr(client, 'close') and callable(client.close):
-                     # Check if close is async, might need await
-                     try:
-                         # Assuming client.close() is async based on previous client code
-                         await client.close()
-                     except Exception:
-                         LOGGER.warning("Failed to close temporary Venice AI client")
-
 
         # Show the form again if user_input was None or errors occurred
         return self.async_show_form(
@@ -173,31 +160,50 @@ class VeniceAIOptionsFlow(OptionsFlow):
         if self._client:
             try:
                 models_response = await self._client.models.list()
-                fetched_models = [
-                    SelectOptionDict(
-                        # Use model ID as value, format label nicely
-                        value=model["id"],
-                        label=f"{model.get('name', model['id'])} ({model['id']})"
-                    )
-                    for model in models_response if model.get("id") # Ensure model has an ID
-                    # Filter for text models if API provides type, spec shows type param in request
-                ]
-                # Sort models alphabetically by label, keeping Default first
-                fetched_models.sort(key=lambda x: x["label"])
-                models_options.extend(fetched_models)
+                LOGGER.debug("Models response: %s", models_response)
+
+                # Venice AI returns a direct list of models, not {"data": [...]}
+                if models_response and isinstance(models_response, list):
+                    fetched_models = []
+                    for model in models_response:
+                        model_id = model.get("id")
+                        if not model_id:
+                            continue
+
+                        # Check if model supports function calling
+                        model_spec = model.get("model_spec", {})
+                        capabilities = model_spec.get("capabilities", {})
+                        supports_function_calling = capabilities.get("supportsFunctionCalling", False)
+
+                        if supports_function_calling:
+                            model_name = model_spec.get("name", model_id)
+                            fetched_models.append(SelectOptionDict(
+                                value=model_id,
+                                label=f"{model_name} ({model_id})"
+                            ))
+
+                    # Sort models alphabetically by label
+                    fetched_models.sort(key=lambda x: x["label"])
+                    # Replace the default model option if we have real models
+                    if fetched_models:
+                        models_options = fetched_models
+                        LOGGER.debug("Found %d models with function calling support", len(fetched_models))
+                    else:
+                        LOGGER.warning("No models with function calling support found")
+                else:
+                    LOGGER.error("Invalid models response structure: expected list, got %s", type(models_response))
 
             except AuthenticationError:
                 LOGGER.error("Authentication error fetching models for options flow")
-                errors["base"] = "invalid_auth" # Inform user about auth issue
-            except VeniceAIError:
-                LOGGER.error("Connection error fetching models for options flow")
-                errors["base"] = "cannot_connect" # Inform user about connection issue
+                errors["base"] = "invalid_auth"
+            except VeniceAIError as err:
+                LOGGER.error("Connection error fetching models for options flow: %s", err)
+                errors["base"] = "cannot_connect"
             except Exception:
                 LOGGER.exception("Unexpected error fetching models for options flow")
                 errors["base"] = "unknown"
-                # Keep the default model option even if fetching fails
         else:
-             LOGGER.warning("Venice AI client not available in options flow for entry %s. Model list may be incomplete.", self.config_entry.entry_id)
+             LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
              # Can still show form with default model
 
         # Get available Home Assistant LLM APIs

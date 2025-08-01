@@ -46,6 +46,14 @@ To configure the Venice AI integration:
    - Adjust temperature, max tokens, and other parameters
    - Customize the system prompt if desired
 
+## Models
+
+The Venice AI integration automatically filters and displays only models that support function calling, which is required for Home Assistant device control.
+
+The current default model is Llama 3.3 70B (llama-3.3-70b), which provides excellent function calling capabilities for smart home automation.
+
+For reasoning models like Venice Reasoning (qwen-2.5-qwq-32b) or DeepSeek R1 671B, you can disable thinking for lower latency by enabling the "Disable thinking" option in the configuration.
+
 ## Support
 If you encounter any issues or have feature requests, please open an issue on our [GitHub Issues page](https://github.com/grasponcrypto/venice_ai/issues).
 
