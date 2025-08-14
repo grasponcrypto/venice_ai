@@ -8,7 +8,7 @@ LOGGER = logging.getLogger(__package__)
 CONF_RECOMMENDED = "recommended"
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
-RECOMMENDED_CHAT_MODEL = "default"  # Venice AI uses "default" as their model name
+RECOMMENDED_CHAT_MODEL = "llama-3.3-70b"  # Venice AI default model with function calling support
 CONF_MAX_TOKENS = "max_tokens"
 RECOMMENDED_MAX_TOKENS = 150
 CONF_TOP_P = "top_p"
@@ -20,6 +20,10 @@ RECOMMENDED_TEMPERATURE = 1.0
 # for compatibility
 CONF_REASONING_EFFORT = "reasoning_effort"
 RECOMMENDED_REASONING_EFFORT = "low"
+
+# Venice AI reasoning model options
+CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
+CONF_DISABLE_THINKING = "disable_thinking"
 
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []

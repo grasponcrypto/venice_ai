@@ -26,6 +26,8 @@ from .const import (
     CONF_PROMPT,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_STRIP_THINKING_RESPONSE,
+    CONF_DISABLE_THINKING,
     DOMAIN,
     LOGGER, # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -63,16 +65,17 @@ MAX_TOOL_ITERATIONS = 10
 # --- Default system prompt for Tool Calling ---
 DEFAULT_SYSTEM_PROMPT = """You are a helpful Home Assistant assistant powered by Venice AI. Your goal is to control smart home devices and answer questions about their state using the provided tools.
 
-**Instructions:**
+Instructions:
 
-1.  **Use Tools:** When asked to control a device (on/off, set value) or get its current status (temperature, state), you MUST use one of the provided tools (functions). Check the tool descriptions to select the correct one. Do not guess states or make up information.
-2.  **Tool Execution Flow:**
+1.  Use Tools: When asked to control a device (on/off, set value) or get its current status (temperature, state), you MUST use one of the provided tools (functions). Check the tool descriptions to select the correct one. Do not guess states or make up information.
+2.  Tool Execution Flow:
     * If a tool is needed, call it.
     * Wait for the result, which will come in a message with `role: tool`.
-    * **Crucially:** Base your final response to the user *directly* on the information provided in that `role: tool` message. Do not ignore it or describe the tool call itself.
-3.  **`GetLiveContext` Tool:** Use this specific tool *only* when the user asks about the **current** state, value, or mode of devices, sensors, or areas (e.g., "Is the kitchen light on?", "What temperature is the thermostat set to?", "Is the front door locked?"). Use the data returned by this tool to answer the user's question accurately.
-4.  **Confirmation:** When you successfully control a device using a tool (like turning something on or off), confirm the action in your response (e.g., "Okay, the dining room lights have been turned off.").
-5.  **Limitations:** If you cannot fulfill a request because the required tool is missing or the request is unclear, state that clearly. Do not invent tools or device names. For general knowledge questions not related to the smart home, answer from your internal knowledge.
+    * Crucially: Base your final response to the user *directly* on the information provided in that `role: tool` message. Do not ignore it or describe the tool call itself.
+3.  `GetLiveContext` Tool: Use this specific tool *only* when the user asks about the current state, value, or mode of devices, sensors, or areas (e.g., "Is the kitchen light on?", "What temperature is the thermostat set to?", "Is the front door locked?"). Use the data returned by this tool to answer the user's question accurately.
+4.  Confirmation: When you successfully control a device using a tool (like turning something on or off), confirm the action in your response (e.g., "Okay, the dining room lights have been turned off.").
+5.  Limitations: If you cannot fulfill a request because the required tool is missing or the request is unclear, state that clearly. Do not invent tools or device names. For general knowledge questions not related to the smart home, answer from your internal knowledge.
+6.  Response format: Respond in plain text, no markdown formatting. Be brief as responses may be read aloud by voice assistants.
 """
 # --- End Prompt Definition ---
 
@@ -162,6 +165,26 @@ def _convert_to_venice_message(msg: SystemContent | UserContent | AssistantConte
           return None
 
 # --- End Helper Functions ---
+
+def _build_model_name(base_model: str, options: dict[str, Any]) -> str:
+    """Build the model name with reasoning options suffixes."""
+    model_name = base_model
+
+    # Check if we need to add suffixes
+    strip_thinking = options.get(CONF_STRIP_THINKING_RESPONSE, False)
+    disable_thinking = options.get(CONF_DISABLE_THINKING, False)
+
+    if strip_thinking or disable_thinking:
+        suffixes = []
+        if disable_thinking:
+            suffixes.append("disable_thinking=true")
+        if strip_thinking:
+            suffixes.append("strip_thinking_response=true")
+
+        if suffixes:
+            model_name = f"{base_model}:{'&'.join(suffixes)}"
+
+    return model_name
 
 
 # --- Inherit from ConversationEntity ---
@@ -288,7 +311,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                  _LOGGER.debug("Messages to be sent: %s", json.dumps(next_api_request_messages[-10:], indent=2)) # Log last 10
 
                  api_request_payload = {
-                      "model": options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+                      "model": _build_model_name(
+                          options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+                          options
+                      ),
                       "messages": next_api_request_messages, # Send current message list
                       "max_tokens": options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
                       "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
