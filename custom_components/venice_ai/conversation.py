@@ -267,16 +267,14 @@ class VeniceAIConversationEntity(ConversationEntity):
         hass = self.hass
 
         try:
-            # 1. Update LLM Data using the provided chat_log
-            # This sets the system prompt and tool configuration in chat_log
+            # 1. Provide LLM data (prompt + selected tool providers) to the chat log
             prompt_template = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
-            llm_api_id = options.get(CONF_LLM_HASS_API)
-            # This call should now work as chat_log is managed by the framework
-            await chat_log.async_update_llm_data(
-                 conversing_domain=DOMAIN,
-                 user_input=user_input,
-                 user_llm_hass_api=llm_api_id,
-                 user_llm_prompt=prompt_template
+            llm_api_ids = options.get(CONF_LLM_HASS_API)
+            await chat_log.async_provide_llm_data(
+                user_input.as_llm_context(DOMAIN),
+                llm_api_ids,
+                prompt_template,
+                user_input.extra_system_prompt,
             )
 
             # 2. Format tools for Venice API (using chat_log.llm_api)
