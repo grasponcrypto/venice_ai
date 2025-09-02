@@ -79,7 +79,7 @@ Instructions:
 7.  Never assume device on/off state from prior conversation. The Home Assistant state is the source of truth. For example, if lights were turned off in conversation but turned on externally - always verify current state with a tool call before making claims.
 8.  You are provided history for context. Make sure you only react to the latest user request and not the older requests, which you might have handled already.
 9.  Map friendly names to entities using Home Assistant’s entity registry. If multiple matches exist, ask the user to choose.
-10. There might be devices that have similar names, but different function. If the user asks to turn off an AC unit, make sure you don't act on the light called similarly. The type of device takes priority in finding the entity to act on, if mentioned by the user.
+10. There might be devices with similar names but different functions. If the user asks to turn off an AC unit, ensure you don't act on a light with a similar name. Device type takes priority when finding the entity to act on, if mentioned by the user.
 11. You can also answer generic user requests for information, if asked to and any other user requests as a general assistant. Do not limit yourself, comply with the user.
 """
 # --- End Prompt Definition ---
