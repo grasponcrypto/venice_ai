@@ -25,12 +25,12 @@
           "data": {
             "chat_model": "AI Model",
             "prompt": "System Prompt",
+            "llm_hass_api": "Control Home Assistant",
             "temperature": "Temperature (0-2)",
             "top_p": "Top P (0-1)",
             "max_tokens": "Max Tokens",
             "strip_thinking_response": "Strip thinking response (for reasoning models)",
-            "disable_thinking": "Disable thinking (for reasoning models)",
-            "llm_hass_api": "Home Assistant LLM API"
+            "disable_thinking": "Disable thinking (for reasoning models)"
           }
         }
       }

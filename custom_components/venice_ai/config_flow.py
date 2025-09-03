@@ -97,7 +97,8 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 # API key is valid, create the entry.
                 initial_options = {
-                    CONF_LLM_HASS_API: None,
+                    # Allow selecting multiple LLM APIs (tool providers)
+                    CONF_LLM_HASS_API: [],
                     CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
                     CONF_PROMPT: DEFAULT_SYSTEM_PROMPT,
                     CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
@@ -138,12 +139,24 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
         # Handle form submission
         if user_input is not None:
-            # Special handling for LLM API "None" selection if needed,
-            if user_input.get(CONF_LLM_HASS_API) == "None":
-                 user_input[CONF_LLM_HASS_API] = None # Convert "None" string to actual None
+            # Normalize/sanitize selected tool API IDs to avoid stale values
+            allowed_ids = {api.id for api in llm.async_get_apis(self.hass)}
+            if CONF_LLM_HASS_API in user_input:
+                selected_ids = [
+                    api_id for api_id in user_input[CONF_LLM_HASS_API] if api_id in allowed_ids
+                ]
+            else:
+                # If not provided by UI, sanitize existing stored selection
+                selected_ids = [
+                    api_id
+                    for api_id in self.config_entry.options.get(CONF_LLM_HASS_API, [])
+                    if api_id in allowed_ids
+                ]
 
             # Merge new user_input with existing options, prioritizing new input
             updated_options = {**self.config_entry.options, **user_input}
+            # Always persist sanitized tool IDs to drop stale ones
+            updated_options[CONF_LLM_HASS_API] = selected_ids
             # Perform any validation on the combined options if necessary here
 
             # Create/update the entry with the new options
@@ -211,8 +224,14 @@ class VeniceAIOptionsFlow(OptionsFlow):
             SelectOptionDict(value=api.id, label=api.name)
             for api in llm.async_get_apis(self.hass)
         ]
-        # Add a "None" option
-        hass_apis_with_none = [SelectOptionDict(value="None", label="None")] + hass_apis
+        # Only suggest values that are still valid options
+        llm_api_allowed_ids = {opt["value"] for opt in hass_apis}
+        stored_llm_api_ids = self.config_entry.options.get(CONF_LLM_HASS_API, []) or []
+        if not isinstance(stored_llm_api_ids, list):
+            stored_llm_api_ids = []
+        filtered_llm_api_suggested = [
+            api_id for api_id in stored_llm_api_ids if api_id in llm_api_allowed_ids
+        ]
 
 
         # Define the schema for the options form
@@ -235,6 +254,16 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 # Use description for suggested_value if needed, or just default
                 default=self.config_entry.options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
             ): TemplateSelector(),
+            # --- LLM HASS API Selection (tools) ---
+            vol.Optional(
+                CONF_LLM_HASS_API,
+                description={"suggested_value": filtered_llm_api_suggested},
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=hass_apis,
+                    multiple=True,
+                )
+            ),
             # --- Temperature ---
             vol.Optional(
                 CONF_TEMPERATURE,
@@ -268,19 +297,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 CONF_DISABLE_THINKING,
                 default=self.config_entry.options.get(CONF_DISABLE_THINKING, False)
             ): BooleanSelector(),
-            # --- LLM HASS API Selection ---
-            vol.Optional(
-                CONF_LLM_HASS_API,
-                # Default selector to current value, handle None correctly
-                default=self.config_entry.options.get(CONF_LLM_HASS_API) or "None" # Use "None" string for selector default if current value is None
-            ): SelectSelector(
-                 SelectSelectorConfig(
-                      options=hass_apis_with_none,
-                      mode=SelectSelectorMode.DROPDOWN,
-                      # translation_key="llm_hass_api", # Optional frontend translation
-                      sort=False # Keep "None" first
-                 )
-            ),
         }
 
         options_schema = vol.Schema(options_schema_dict)
