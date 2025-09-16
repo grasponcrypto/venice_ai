@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from homeassistant.components.todo import AITaskEntity
+from homeassistant.components.ai_task import AITaskEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -23,7 +23,7 @@ class VeniceAITaskEntity(AITaskEntity):
 
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the Venice AI Task Entity."""
-        super().__init__(entry)
+        super().__init__()
         self.entry = entry
         self._attr_unique_id = f"{entry.entry_id}_task"
         self._client: AsyncVeniceAIClient = entry.runtime_data

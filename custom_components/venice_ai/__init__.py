@@ -21,11 +21,13 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import config_validation as cv, selector
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.components import ai_task, conversation
 
 from .const import DOMAIN, LOGGER
 
 SERVICE_GENERATE_IMAGE = "generate_image"
-PLATFORMS = (Platform.CONVERSATION, Platform.TASK)
+SERVICE_AI_TASK = "ai_task"
+PLATFORMS = (Platform.CONVERSATION, Platform.AI_TASK)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 class VeniceAIConfigEntry(ConfigEntry):
@@ -66,6 +68,59 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         return response.data[0].model_dump(exclude={"b64_json"})
 
+    async def generate_data(call: ServiceCall) -> ServiceResponse:
+        """Generate data using Venice AI Task."""
+        entry_id = call.data["config_entry"]
+        entry = hass.config_entries.async_get_entry(entry_id)
+
+        if entry is None or entry.domain != DOMAIN:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_config_entry",
+                translation_placeholders={"config_entry": entry_id},
+            )
+
+        # Get the AI Task entity from the platform data
+        ai_task_entity = None
+        if "ai_task" in hass.data:
+            for ent in hass.data["ai_task"].entities:
+                if hasattr(ent, 'entry') and ent.entry.entry_id == entry.entry_id:
+                    ai_task_entity = ent
+                    break
+
+        if ai_task_entity is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="entity_not_found",
+                translation_placeholders={"entry_id": entry.entry_id},
+            )
+
+        # Create task and chat log
+        task_text = call.data["task"]
+        structure = call.data.get("structure")
+
+        gen_task = ai_task.GenDataTask(
+            task=task_text,
+            structure=structure,
+        )
+
+        # Create a simple chat log with the task as user input
+        chat_log = conversation.ChatLog(
+            conversation_id="service_call",
+            content=[
+                conversation.UserContent(content=task_text)
+            ]
+        )
+
+        try:
+            result = await ai_task_entity._async_generate_data(gen_task, chat_log)
+            return {
+                "conversation_id": result.conversation_id,
+                "data": result.data,
+            }
+        except Exception as err:
+            raise HomeAssistantError(f"Error generating data: {err}") from err
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_GENERATE_IMAGE,
@@ -83,6 +138,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 ),
                 vol.Optional("quality", default="standard"): vol.In(("standard", "hd")),
                 vol.Optional("style", default="vivid"): vol.In(("vivid", "natural")),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_AI_TASK,
+        generate_data,
+        schema=vol.Schema(
+            {
+                vol.Required("config_entry"): selector.ConfigEntrySelector(
+                    {
+                        "integration": DOMAIN,
+                    }
+                ),
+                vol.Required("task"): cv.string,
+                vol.Optional("structure"): cv.string,
             }
         ),
         supports_response=SupportsResponse.ONLY,
@@ -109,7 +182,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     # Store client in runtime_data
     entry.runtime_data = client
 
+    LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    LOGGER.info("Successfully forwarded entry setups")
     return True
 
 

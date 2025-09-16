@@ -68,7 +68,6 @@ class ChatCompletions:
              data["tool_choice"] = tool_choice # Pass tool_choice if provided
 
 
-        _LOGGER.debug("Sending streaming request to Venice AI: %s", data)
         try:
             async with self.client._http_client.stream(
                 "POST",
@@ -116,8 +115,6 @@ class ChatCompletions:
         payload["stream"] = False
         response_text = None # Initialize for potential use in error logging
 
-        # Log the payload right before sending
-        _LOGGER.debug("Sending non-streaming request payload to Venice AI: %s", json.dumps(payload, indent=2))
         try:
             response = await self.client._http_client.post(
                 f"{self.client._base_url}/chat/completions",
@@ -176,7 +173,6 @@ class Models:
 
     async def list(self) -> list[dict]:
         """List available models."""
-        _LOGGER.debug("Fetching model list from Venice AI API")
         response_text = None # Initialize for error logging
         try:
             response = await self.client._http_client.get(
