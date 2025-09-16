@@ -173,7 +173,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
         if self._client:
             try:
                 models_response = await self._client.models.list()
-                LOGGER.debug("Models response: %s", models_response)
 
                 # Venice AI returns a direct list of models, not {"data": [...]}
                 if models_response and isinstance(models_response, list):

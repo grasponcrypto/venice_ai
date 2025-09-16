@@ -38,3 +38,21 @@ generate_image:
           options:
             - "vivid"
             - "natural"
+
+ai_task:
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: venice_ai
+    task:
+      required: true
+      selector:
+        text:
+          multiline: true
+    structure:
+      required: false
+      selector:
+        text:
+          multiline: true

@@ -1,6 +1,6 @@
 {
     "domain": "venice_ai",
-    "name": "VeniceAI Conversation",
+    "name": "VeniceAI",
     "version": "1.0.0",
     "documentation": "https://github.com/grasponcrypto/venice_ai",
     "requirements": ["aiohttp>=3.8.0"],

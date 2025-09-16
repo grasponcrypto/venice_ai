@@ -14,8 +14,6 @@ try:
     HAS_VOLUPTUOUS_OPENAPI = True
 except ImportError:
     HAS_VOLUPTUOUS_OPENAPI = False
-    # Logger might not be defined yet, use print for this warning during import
-    print("WARNING: voluptuous_openapi not installed, schema conversion will be basic.") # noqa: T201
 
 # Import client exceptions and client itself
 from .client import AsyncVeniceAIClient, VeniceAIError
@@ -197,7 +195,8 @@ class VeniceAIConversationEntity(ConversationEntity):
     """Venice AI conversation entity using ConversationEntity pattern."""
 
     _attr_has_entity_name = True
-    _attr_name = None
+    _attr_name = "VeniceAI Conversation"
+    _attr_description = "Conversation agent"
 
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the Venice AI Conversation agent."""
@@ -293,7 +292,6 @@ class VeniceAIConversationEntity(ConversationEntity):
                       if formatted_tool: formatted_tools.append(formatted_tool)
                  if formatted_tools:
                       tools = formatted_tools
-                      _LOGGER.debug("Formatted tools for API call: %s", tools)
 
             # 3. Prepare messages from chat_log history
             messages = []
@@ -312,9 +310,6 @@ class VeniceAIConversationEntity(ConversationEntity):
             next_api_request_messages = messages # Start with full current history
 
             for _iteration in range(MAX_TOOL_ITERATIONS):
-                 _LOGGER.debug("Conversation loop iteration %d", _iteration + 1)
-                 _LOGGER.debug("Messages to be sent: %s", json.dumps(next_api_request_messages[-10:], indent=2)) # Log last 10
-
                  api_request_payload = {
                       "model": _build_model_name(
                           options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
@@ -330,7 +325,6 @@ class VeniceAIConversationEntity(ConversationEntity):
                  }
 
                  response_data = await client.chat.create_non_streaming(api_request_payload)
-                 _LOGGER.debug("Received API response data: %s", response_data)
 
                  if not response_data or not response_data.get("choices"):
                       _LOGGER.error("Invalid response from Venice AI: %s", response_data)
@@ -346,7 +340,6 @@ class VeniceAIConversationEntity(ConversationEntity):
                  api_call_ids = {} # Store mapping from tool_name/args to API call ID
 
                  if tool_calls_data:
-                      _LOGGER.debug("API requested tool calls: %s", tool_calls_data)
                       for tool_call_data in tool_calls_data:
                            # (Validation and parsing as before)
                            call_id = tool_call_data.get("id")
@@ -385,12 +378,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                  )
                  # Collect yielded tool results (ToolResultContent)
                  tool_results: list[ToolResultContent] = [res async for res in tool_results_gen]
-                 _LOGGER.debug("Executed tools via chat_log, results: %s", tool_results)
 
                  # --- Check if loop should continue ---
                  if not ha_tool_inputs: # Check if tools were requested
                       assistant_response_content = text_content # Store final text
-                      _LOGGER.debug("No tool calls requested, ending loop.")
                       break # Exit loop
 
                  # --- Prepare messages for next iteration (send tool results back to API) ---
