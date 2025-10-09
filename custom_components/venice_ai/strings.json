@@ -45,6 +45,18 @@
           "quality": "Image quality",
           "style": "Image style"
         }
+      },
+      "ai_task": {
+        "name": "VeniceAI AI Task",
+        "description": "AI task",
+        "fields": {
+          "task": "Task description",
+          "structure": "Response structure"
+        }
+      },
+      "conversation": {
+        "name": "VeniceAI Conversation",
+        "description": "Conversation agent"
       }
     }
   }
