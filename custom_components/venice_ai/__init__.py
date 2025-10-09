@@ -27,7 +27,7 @@ from .const import DOMAIN, LOGGER
 
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_AI_TASK = "ai_task"
-PLATFORMS = (Platform.CONVERSATION, Platform.AI_TASK)
+PLATFORMS = (Platform.CONVERSATION, Platform.AI_TASK, Platform.TTS)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 class VeniceAIConfigEntry(ConfigEntry):

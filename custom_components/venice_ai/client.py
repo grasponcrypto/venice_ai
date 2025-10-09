@@ -200,6 +200,41 @@ class Models:
             raise VeniceAIError("Failed to decode models API response") from err
 
 
+class Speech:
+    """Speech API for Venice AI."""
+
+    def __init__(self, client: "AsyncVeniceAIClient") -> None:
+        """Initialize speech API."""
+        self.client = client
+
+    async def generate(self, text: str, voice: str = "bm_daniel") -> bytes:
+        """Generate speech audio from text."""
+        data = {
+            "text": text,
+            "voice": voice,
+        }
+
+        try:
+            response = await self.client._http_client.post(
+                f"{self.client._base_url}/audio/speech",
+                headers=self.client._headers,
+                json=data,
+                timeout=60.0  # Timeout for audio generation
+            )
+            response.raise_for_status()
+            return response.content  # Return raw bytes
+
+        except httpx.HTTPStatusError as err:
+            error_detail = err.response.text
+            _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key for speech") from err
+            raise VeniceAIError(f"HTTP error generating speech {err.response.status_code}: {error_detail}") from err
+        except httpx.RequestError as err:
+            _LOGGER.error("Venice AI Speech API request error: %s", err)
+            raise VeniceAIError(f"Request error generating speech: {err}") from err
+
+
 # --- Main Async Client Class ---
 class AsyncVeniceAIClient:
     """Async client for the Venice AI API using httpx."""
@@ -229,6 +264,7 @@ class AsyncVeniceAIClient:
         # Initialize API endpoints
         self.chat = ChatCompletions(self)
         self.models = Models(self)
+        self.speech = Speech(self)
         # Note: Image generation client part is missing based on original file
 
     async def close(self) -> None:
