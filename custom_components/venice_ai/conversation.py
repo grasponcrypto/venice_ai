@@ -70,6 +70,7 @@ def _make_schema_hashable(obj: Any) -> Any:
         return type(obj)(_make_schema_hashable(item) for item in obj)
     elif hasattr(obj, '__class__') and 'Selector' in obj.__class__.__name__:
         # Replace HA selectors with str type
+        _LOGGER.debug("_make_schema_hashable: replacing selector %s with str", obj.__class__.__name__)
         return str
     else:
         return obj
@@ -77,6 +78,10 @@ def _make_schema_hashable(obj: Any) -> Any:
 def _format_venice_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     """Format the schema to be compatible with Venice API."""
     if not schema: return None
+    # Convert voluptuous Schema to dict if needed
+    if hasattr(schema, 'schema'):
+        schema = schema.schema
+    _LOGGER.debug("_format_venice_schema: schema type: %s, has schema attr: %s", type(schema), hasattr(schema, 'schema'))
     supported_types = {"string", "number", "integer", "boolean", "object", "array"}
     supported_string_formats = {"date-time"}
     if HAS_VOLUPTUOUS_OPENAPI:
@@ -86,10 +91,16 @@ def _format_venice_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
             converted = voluptuous_convert(hashable_schema)
             def simplify(sub_schema: dict[str, Any]) -> dict[str, Any]:
                 simplified_sub = {}
+                # Handle anyOf by taking the first item (simplified approach)
+                if "anyOf" in sub_schema:
+                    if sub_schema["anyOf"]:
+                        return simplify(sub_schema["anyOf"][0])
+                    else:
+                        return {"type": "string"}
                 schema_type = sub_schema.get("type")
                 if not isinstance(schema_type, str) or schema_type not in supported_types:
                      simplified_sub["type"] = "string"
-                     _LOGGER.warning("Unsupported/missing schema type '%s', defaulting to string.", schema_type)
+                     _LOGGER.warning("Unsupported/missing schema type '%s' in sub_schema %s, defaulting to string.", schema_type, sub_schema)
                 else: simplified_sub["type"] = schema_type
                 if "description" in sub_schema: simplified_sub["description"] = sub_schema["description"]
                 if schema_type == "string":
@@ -328,7 +339,6 @@ class VeniceAIConversationEntity(ConversationEntity):
                  # --- Parse Tool Calls for Home Assistant ---
                  # *** Use llm.ToolInput instead of llm.ToolCall ***
                  ha_tool_inputs: list[llm.ToolInput] = [] # Changed variable name for clarity
-                 api_call_ids = {} # Store mapping from tool_name/args to API call ID
 
                  if tool_calls_data:
                       for tool_call_data in tool_calls_data:
@@ -351,12 +361,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                                # TODO: Send error result back to API? Need call_id.
                                continue
 
-                           # Create ToolInput object
-                           tool_input = llm.ToolInput(tool_name=tool_name, tool_args=tool_args)
+                           # Create ToolInput object with id set to API call_id
+                           tool_input = llm.ToolInput(tool_name=tool_name, tool_args=tool_args, id=call_id)
                            ha_tool_inputs.append(tool_input)
-                           # Store the API call ID associated with this specific input
-                           # Use a tuple of name and stringified args as a simple key
-                           api_call_ids[(tool_name, json.dumps(tool_args, sort_keys=True))] = call_id
 
 
                  # --- Add assistant response and execute tools using chat_log ---
@@ -382,26 +389,14 @@ class VeniceAIConversationEntity(ConversationEntity):
                  # Convert assistant message and tool results to API format
                  next_api_request_messages = [_convert_to_venice_message(assistant_log_message)]
                  for result in tool_results:
-                      # *** Need to find the original API call_id for this result ***
-                      # Recreate the key used to store the ID
-                      result_key = (result.tool_name, json.dumps(result.tool_result.get("original_input", {}).get("tool_args", {}), sort_keys=True)) # Assuming result structure contains original input args
-                      original_call_id = api_call_ids.get(result_key)
-
-                      if not original_call_id:
-                           # ToolResultContent in HA doesn't directly store the API's call ID.
-                           # We need a way to map the result back to the original API request ID.
-                           # This is a significant gap in this approach compared to Google's where
-                           # the framework might handle this mapping implicitly or the ToolResultContent
-                           # might contain the necessary ID.
-                           # For now, we might have to guess or use a placeholder if mapping fails.
-                           _LOGGER.error("Could not map ToolResultContent back to original API call ID for tool %s. Result: %s", result.tool_name, result.tool_result)
-                           # Using the tool_name as a fallback ID - THIS IS LIKELY WRONG for the API
-                           original_call_id = f"missing_id_for_{result.tool_name}"
+                      _LOGGER.debug("Processing tool result: tool_name=%s, tool_call_id=%s, tool_result=%s", result.tool_name, result.tool_call_id, result.tool_result)
+                      # Use the tool_call_id from ToolResultContent, which should match the API call_id
+                      original_call_id = result.tool_call_id
 
                       # Create the 'tool' role message for the API
                       tool_api_message = {
                            "role": "tool",
-                           "tool_call_id": original_call_id, # Use the mapped/fallback ID
+                           "tool_call_id": original_call_id, # Use the ID from the result
                            "content": json.dumps(result.tool_result) # Send the actual result
                       }
                       next_api_request_messages.append(tool_api_message)
