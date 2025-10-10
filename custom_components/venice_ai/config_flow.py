@@ -39,6 +39,10 @@ from .const import (
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
+    CONF_TTS_MODEL,
+    CONF_TTS_VOICE,
+    CONF_TTS_RESPONSE_FORMAT,
+    CONF_TTS_SPEED,
     DOMAIN,
     LOGGER, # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -46,6 +50,10 @@ from .const import (
     # RECOMMENDED_REASONING_EFFORT, # Not used
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
+    RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_VOICE,
+    RECOMMENDED_TTS_RESPONSE_FORMAT,
+    RECOMMENDED_TTS_SPEED,
 )
 # Import the default prompt from the updated conversation module
 try:
@@ -166,7 +174,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
         # --- Prepare form schema ---
         errors: dict[str, str] = {}
         models_options: list[SelectOptionDict] = [
-             SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
+              SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
+        ]
+        voices_options: list[SelectOptionDict] = [
+              SelectOptionDict(value=RECOMMENDED_TTS_VOICE, label="Default Voice")
         ]
 
         # Fetch models if client is available (best effort)
@@ -215,8 +226,51 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 LOGGER.exception("Unexpected error fetching models for options flow")
                 errors["base"] = "unknown"
         else:
-             LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
-             # Can still show form with default model
+              LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
+              # Can still show form with default model
+
+        # Fetch voices if client is available (best effort)
+        if self._client:
+            try:
+                voices_response = await self._client.voices.list()
+
+                # Venice AI returns a direct list of voices, not {"data": [...]}
+                if voices_response and isinstance(voices_response, list):
+                    fetched_voices = []
+                    for voice in voices_response:
+                        voice_id = voice.get("id")
+                        if not voice_id:
+                            continue
+
+                        voice_name = voice.get("name", voice_id)
+                        fetched_voices.append(SelectOptionDict(
+                            value=voice_id,
+                            label=f"{voice_name} ({voice_id})"
+                        ))
+
+                    # Sort voices alphabetically by label
+                    fetched_voices.sort(key=lambda x: x["label"])
+                    # Replace the default voice option if we have real voices
+                    if fetched_voices:
+                        voices_options = fetched_voices
+                        LOGGER.debug("Found %d voices", len(fetched_voices))
+                    else:
+                        LOGGER.warning("No voices found")
+                else:
+                    LOGGER.error("Invalid voices response structure: expected list, got %s", type(voices_response))
+
+            except AuthenticationError:
+                LOGGER.error("Authentication error fetching voices for options flow")
+                errors["base"] = "invalid_auth"
+            except VeniceAIError as err:
+                LOGGER.error("Connection error fetching voices for options flow: %s", err)
+                errors["base"] = "cannot_connect"
+            except Exception:
+                LOGGER.exception("Unexpected error fetching voices for options flow")
+                errors["base"] = "unknown"
+        else:
+              LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default voice only.", self.config_entry.entry_id)
+              # Can still show form with default voice
 
         # Get available Home Assistant LLM APIs
         hass_apis = [
@@ -296,6 +350,48 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 CONF_DISABLE_THINKING,
                 default=self.config_entry.options.get(CONF_DISABLE_THINKING, False)
             ): BooleanSelector(),
+            # --- TTS Model Selection ---
+            vol.Optional(
+                CONF_TTS_MODEL,
+                default=self.config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[SelectOptionDict(value=RECOMMENDED_TTS_MODEL, label="TTS Kokoro Model")],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            # --- TTS Voice Selection ---
+            vol.Optional(
+                CONF_TTS_VOICE,
+                default=self.config_entry.options.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=voices_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            # --- TTS Response Format ---
+            vol.Optional(
+                CONF_TTS_RESPONSE_FORMAT,
+                default=self.config_entry.options.get(CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="mp3", label="MP3"),
+                        SelectOptionDict(value="wav", label="WAV"),
+                        SelectOptionDict(value="ogg", label="OGG"),
+                        SelectOptionDict(value="flac", label="FLAC"),
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            # --- TTS Speed ---
+            vol.Optional(
+                CONF_TTS_SPEED,
+                default=self.config_entry.options.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
+            ): NumberSelector(
+                NumberSelectorConfig(min=0.1, max=3.0, step=0.1, mode="slider")
+            ),
         }
 
         options_schema = vol.Schema(options_schema_dict)

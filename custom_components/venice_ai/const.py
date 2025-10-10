@@ -25,5 +25,15 @@ RECOMMENDED_REASONING_EFFORT = "low"
 CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
 CONF_DISABLE_THINKING = "disable_thinking"
 
+# Venice AI TTS options
+CONF_TTS_MODEL = "tts_model"
+RECOMMENDED_TTS_MODEL = "tts-kokoro"
+CONF_TTS_VOICE = "tts_voice"
+RECOMMENDED_TTS_VOICE = "bm_daniel"
+CONF_TTS_RESPONSE_FORMAT = "tts_response_format"
+RECOMMENDED_TTS_RESPONSE_FORMAT = "mp3"
+CONF_TTS_SPEED = "tts_speed"
+RECOMMENDED_TTS_SPEED = 1.0
+
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []
