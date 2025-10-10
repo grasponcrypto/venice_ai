@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator # Keep if used by helpers
-from typing import Any, Literal, cast
-import asyncio
+from typing import Any, Literal
 
 # Try importing voluptuous_openapi for schema conversion, handle if not available
 try:
@@ -27,7 +25,6 @@ from .const import (
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
     DOMAIN,
-    LOGGER, # Use existing logger
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
@@ -37,15 +34,15 @@ from .const import (
 # Import necessary types and helpers directly from conversation component
 # This assumes these are correctly exposed in the user's HA version's conversation/__init__.py
 from homeassistant.components.conversation import (
-    ConversationEntity, # Inherit from this instead of AbstractConversationAgent
+    ConversationEntity,  # Inherit from this instead of AbstractConversationAgent
     ChatLog,
     ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
-    SystemContent, # Needed for type checking in helper
-    UserContent, # Needed for type checking in helper
-    AssistantContent, # Needed for constructing/type hints
-    ToolResultContent, # Needed for type checking in helper
+    SystemContent,  # Needed for type checking in helper
+    UserContent,  # Needed for type checking in helper
+    AssistantContent,  # Needed for constructing/type hints
+    ToolResultContent,  # Needed for type checking in helper
     # current_chat_log is NOT imported - we receive chat_log as argument
 )
 
@@ -60,24 +57,23 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 # Max number of back and forth with the LLM to generate a response
 MAX_TOOL_ITERATIONS = 10
 
-# --- Default system prompt for Tool Calling ---
-DEFAULT_SYSTEM_PROMPT = """
-You are a fun, helpful Home Assistant voice assistant powered by Venice.ai, always speaking in a kid-friendly way—like chatting with a friendly neighbor. Your primary goal is to control smart home devices (turn on/off, adjust settings) and answer status questions (e.g., "Are the lights off in the kids' rooms?") using the provided tools—never guess or invent info.
-Secondary goal: If kids ask for jokes or fun stuff, share short, silly ones to entertain them.
-Key Rules:
-
-Tools First: For any device control or status query, ALWAYS call the right tool (check descriptions). Use GetLiveContext ONLY for current states/values/modes of devices, sensors, or areas. Wait for the role: tool result, then base your reply directly on it—don't mention the tool.
-Confirm Actions: After a successful control (e.g., "Turn off the bedroom light"), say something simple like, "Got it! The bedroom light is off now."
-Stay Accurate: Never assume states from chat history—always tool-check the real Home Assistant truth. Map friendly names to exact entities; if unclear or multiple options, ask nicely (e.g., "Do you mean the blue lamp or the nightlight?"). Prioritize device type if mentioned (e.g., don't mix up an AC with a light).
-Handle Limits: If a request can't be done (missing tool, unclear), say so kindly: "Sorry, I can't find that device—can you tell me more?" For non-home questions (jokes, facts, general help), answer briefly from your knowledge.
-Voice-Friendly Replies: Keep everything short, plain text only—no markdown, emojis, or extras. Speak naturally for TTS, like a quick, cheerful chat. Focus only on the latest request, ignoring old ones.
-Be Flexible: You're also a general buddy—help with whatever they ask, but keep it light and safe for kids.
-"""
-# --- End Prompt Definition ---
+DEFAULT_SYSTEM_PROMPT = llm.DEFAULT_INSTRUCTIONS_PROMPT
 
 _LOGGER = logging.getLogger(__package__) # Use the standard logger name
 
 # --- Helper Functions for Tool Formatting ---
+def _make_schema_hashable(obj: Any) -> Any:
+    """Recursively make schema objects hashable by replacing selectors with str."""
+    if isinstance(obj, dict):
+        return {k: _make_schema_hashable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return type(obj)(_make_schema_hashable(item) for item in obj)
+    elif hasattr(obj, '__class__') and 'Selector' in obj.__class__.__name__:
+        # Replace HA selectors with str type
+        return str
+    else:
+        return obj
+
 def _format_venice_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     """Format the schema to be compatible with Venice API."""
     if not schema: return None
@@ -85,7 +81,9 @@ def _format_venice_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     supported_string_formats = {"date-time"}
     if HAS_VOLUPTUOUS_OPENAPI:
         try:
-            converted = voluptuous_convert(schema)
+            # Make schema hashable by replacing selectors with str
+            hashable_schema = _make_schema_hashable(schema)
+            converted = voluptuous_convert(hashable_schema)
             def simplify(sub_schema: dict[str, Any]) -> dict[str, Any]:
                 simplified_sub = {}
                 schema_type = sub_schema.get("type")
@@ -265,7 +263,7 @@ class VeniceAIConversationEntity(ConversationEntity):
 
         try:
             # 1. Provide LLM data (prompt + selected tool providers) to the chat log
-            prompt_template = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
+            prompt_template = (options.get(CONF_PROMPT) or "") + ("\n\n" if options.get(CONF_PROMPT) else "") + DEFAULT_SYSTEM_PROMPT
             llm_api_ids = options.get(CONF_LLM_HASS_API) or []
             if not isinstance(llm_api_ids, list):
                 llm_api_ids = []

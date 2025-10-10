@@ -44,7 +44,7 @@ from .const import (
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
     DOMAIN,
-    LOGGER, # Use existing logger
+    LOGGER,  # Use existing logger
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
     # RECOMMENDED_REASONING_EFFORT, # Not used
@@ -87,11 +87,13 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
             # Validate the API key
             try:
                 # Use a temporary client instance for validation
+                LOGGER.debug("Validating Venice AI API key by fetching models")
                 client = AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY])
                 models_response = await client.models.list()
                 # Verify we got a valid response - it should be a list of models
                 if not models_response or not isinstance(models_response, list):
                     raise VeniceAIError("Invalid models response")
+                LOGGER.debug("API key validation successful, found %d models", len(models_response))
 
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
@@ -176,13 +178,28 @@ class VeniceAIOptionsFlow(OptionsFlow):
         models_options: list[SelectOptionDict] = [
               SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
         ]
-        voices_options: list[SelectOptionDict] = [
-              SelectOptionDict(value=RECOMMENDED_TTS_VOICE, label="Default Voice")
+        # Hardcoded list of available voices
+        hardcoded_voices = [
+            "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jadzia", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+            "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
+            "bf_alice", "bf_emma", "bf_lily",
+            "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+            "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+            "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+            "ff_siwis", "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+            "if_sara", "im_nicola",
+            "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+            "pf_dora", "pm_alex", "pm_santa",
+            "ef_dora", "em_alex", "em_santa"
+        ]
+        voices_options = [
+            SelectOptionDict(value=voice, label=voice) for voice in sorted(hardcoded_voices)
         ]
 
         # Fetch models if client is available (best effort)
         if self._client:
             try:
+                LOGGER.debug("Fetching models for options flow")
                 models_response = await self._client.models.list()
 
                 # Venice AI returns a direct list of models, not {"data": [...]}
@@ -228,49 +245,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
         else:
               LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
               # Can still show form with default model
-
-        # Fetch voices if client is available (best effort)
-        if self._client:
-            try:
-                voices_response = await self._client.voices.list()
-
-                # Venice AI returns a direct list of voices, not {"data": [...]}
-                if voices_response and isinstance(voices_response, list):
-                    fetched_voices = []
-                    for voice in voices_response:
-                        voice_id = voice.get("id")
-                        if not voice_id:
-                            continue
-
-                        voice_name = voice.get("name", voice_id)
-                        fetched_voices.append(SelectOptionDict(
-                            value=voice_id,
-                            label=f"{voice_name} ({voice_id})"
-                        ))
-
-                    # Sort voices alphabetically by label
-                    fetched_voices.sort(key=lambda x: x["label"])
-                    # Replace the default voice option if we have real voices
-                    if fetched_voices:
-                        voices_options = fetched_voices
-                        LOGGER.debug("Found %d voices", len(fetched_voices))
-                    else:
-                        LOGGER.warning("No voices found")
-                else:
-                    LOGGER.error("Invalid voices response structure: expected list, got %s", type(voices_response))
-
-            except AuthenticationError:
-                LOGGER.error("Authentication error fetching voices for options flow")
-                errors["base"] = "invalid_auth"
-            except VeniceAIError as err:
-                LOGGER.error("Connection error fetching voices for options flow: %s", err)
-                errors["base"] = "cannot_connect"
-            except Exception:
-                LOGGER.exception("Unexpected error fetching voices for options flow")
-                errors["base"] = "unknown"
-        else:
-              LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default voice only.", self.config_entry.entry_id)
-              # Can still show form with default voice
 
         # Get available Home Assistant LLM APIs
         hass_apis = [

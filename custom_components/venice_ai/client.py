@@ -174,9 +174,11 @@ class Models:
     async def list(self) -> list[dict]:
         """List available models."""
         response_text = None # Initialize for error logging
+        url = f"{self.client._base_url}/models"
+        _LOGGER.debug("Attempting to fetch models from URL: %s", url)
         try:
             response = await self.client._http_client.get(
-                f"{self.client._base_url}/models",
+                url,
                 headers=self.client._headers,
                 params={"type": "text"} # Spec shows type parameter
             )
@@ -184,6 +186,7 @@ class Models:
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
+            _LOGGER.debug("Successfully fetched %d models", len(models))
             return models
         except httpx.HTTPStatusError as err:
              # Handle errors similarly to chat completion calls
@@ -193,7 +196,7 @@ class Models:
                  raise AuthenticationError("Invalid API key checking models") from err
              raise VeniceAIError(f"HTTP error fetching models {err.response.status_code}: {error_detail}") from err
         except httpx.RequestError as err:
-             _LOGGER.error("Venice AI Models API request error: %s", err)
+             _LOGGER.error("Venice AI Models API request error: %s (URL: %s, type: %s)", err, url, type(err).__name__)
              raise VeniceAIError(f"Request error fetching models: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode models JSON response: %s", response_text)
