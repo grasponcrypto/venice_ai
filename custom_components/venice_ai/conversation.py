@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator # Keep if used by helpers
-from typing import Any, Literal, cast
-import asyncio
+from typing import Any, Literal
 
 # Try importing voluptuous_openapi for schema conversion, handle if not available
 try:
@@ -27,7 +25,6 @@ from .const import (
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
     DOMAIN,
-    LOGGER, # Use existing logger
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
@@ -37,15 +34,15 @@ from .const import (
 # Import necessary types and helpers directly from conversation component
 # This assumes these are correctly exposed in the user's HA version's conversation/__init__.py
 from homeassistant.components.conversation import (
-    ConversationEntity, # Inherit from this instead of AbstractConversationAgent
+    ConversationEntity,  # Inherit from this instead of AbstractConversationAgent
     ChatLog,
     ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
-    SystemContent, # Needed for type checking in helper
-    UserContent, # Needed for type checking in helper
-    AssistantContent, # Needed for constructing/type hints
-    ToolResultContent, # Needed for type checking in helper
+    SystemContent,  # Needed for type checking in helper
+    UserContent,  # Needed for type checking in helper
+    AssistantContent,  # Needed for constructing/type hints
+    ToolResultContent,  # Needed for type checking in helper
     # current_chat_log is NOT imported - we receive chat_log as argument
 )
 
@@ -60,31 +57,23 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 # Max number of back and forth with the LLM to generate a response
 MAX_TOOL_ITERATIONS = 10
 
-# --- Default system prompt for Tool Calling ---
-DEFAULT_SYSTEM_PROMPT = """You are a helpful Home Assistant assistant powered by Venice AI. Your goal is to control smart home devices and answer questions about their state using the provided tools.
-
-Instructions:
-
-1.  Use Tools: When asked to control a device (on/off, set value) or get its current status (temperature, state), you MUST use one of the provided tools (functions). Check the tool descriptions to select the correct one. Do not guess states or make up information.
-2.  Tool Execution Flow:
-    * If a tool is needed, call it.
-    * Wait for the result, which will come in a message with `role: tool`.
-    * Crucially: Base your final response to the user *directly* on the information provided in that `role: tool` message. Do not ignore it or describe the tool call itself.
-3.  `GetLiveContext` Tool: Use this specific tool *only* when the user asks about the current state, value, or mode of devices, sensors, or areas (e.g., "Is the kitchen light on?", "What temperature is the thermostat set to?", "Is the front door locked?"). Use the data returned by this tool to answer the user's question accurately.
-4.  Confirmation: When you successfully control a device using a tool (like turning something on or off), confirm the action in your response (e.g., "Okay, the dining room lights have been turned off.").
-5.  Limitations: If you cannot fulfill a request because the required tool is missing or the request is unclear, state that clearly. Do not invent tools or device names. For general knowledge questions not related to the smart home, answer from your internal knowledge.
-6.  Response format: Respond in plain text, no markdown formatting, no emojis. Be brief as responses may be read aloud by voice assistants.
-7.  Never assume device on/off state from prior conversation. The Home Assistant state is the source of truth. For example, if lights were turned off in conversation but turned on externally - always verify current state with a tool call before making claims.
-8.  You are provided history for context. Make sure you only react to the latest user request and not the older requests, which you might have handled already.
-9.  Map friendly names to entities using Home Assistant’s entity registry. If multiple matches exist, ask the user to choose.
-10. There might be devices with similar names but different functions. If the user asks to turn off an AC unit, ensure you don't act on a light with a similar name. Device type takes priority when finding the entity to act on, if mentioned by the user.
-11. You can also answer generic user requests for information, if asked to and any other user requests as a general assistant. Do not limit yourself, comply with the user.
-"""
-# --- End Prompt Definition ---
+DEFAULT_SYSTEM_PROMPT = llm.DEFAULT_INSTRUCTIONS_PROMPT
 
 _LOGGER = logging.getLogger(__package__) # Use the standard logger name
 
 # --- Helper Functions for Tool Formatting ---
+def _make_schema_hashable(obj: Any) -> Any:
+    """Recursively make schema objects hashable by replacing selectors with str."""
+    if isinstance(obj, dict):
+        return {k: _make_schema_hashable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return type(obj)(_make_schema_hashable(item) for item in obj)
+    elif hasattr(obj, '__class__') and 'Selector' in obj.__class__.__name__:
+        # Replace HA selectors with str type
+        return str
+    else:
+        return obj
+
 def _format_venice_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     """Format the schema to be compatible with Venice API."""
     if not schema: return None
@@ -92,7 +81,9 @@ def _format_venice_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     supported_string_formats = {"date-time"}
     if HAS_VOLUPTUOUS_OPENAPI:
         try:
-            converted = voluptuous_convert(schema)
+            # Make schema hashable by replacing selectors with str
+            hashable_schema = _make_schema_hashable(schema)
+            converted = voluptuous_convert(hashable_schema)
             def simplify(sub_schema: dict[str, Any]) -> dict[str, Any]:
                 simplified_sub = {}
                 schema_type = sub_schema.get("type")
@@ -272,7 +263,7 @@ class VeniceAIConversationEntity(ConversationEntity):
 
         try:
             # 1. Provide LLM data (prompt + selected tool providers) to the chat log
-            prompt_template = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
+            prompt_template = (options.get(CONF_PROMPT) or "") + ("\n\n" if options.get(CONF_PROMPT) else "") + DEFAULT_SYSTEM_PROMPT
             llm_api_ids = options.get(CONF_LLM_HASS_API) or []
             if not isinstance(llm_api_ids, list):
                 llm_api_ids = []
