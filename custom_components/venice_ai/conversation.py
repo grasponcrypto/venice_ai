@@ -151,7 +151,16 @@ def _convert_to_venice_message(msg: SystemContent | UserContent | AssistantConte
           return {"role": "user", "content": msg.content}
      elif isinstance(msg, AssistantContent):
           venice_msg = {"role": "assistant"}
-          venice_msg["content"] = msg.content or "" # Use empty string instead of None
+          # When tool calls are present, Venice AI requires content to not be empty
+          # Set a placeholder content if the original content is empty but tool calls exist
+          if msg.content and msg.content.strip():
+               venice_msg["content"] = msg.content
+          elif msg.tool_calls:
+               # Venice AI requires content when tool calls are present
+               venice_msg["content"] = "I'm processing your request..."
+          else:
+               venice_msg["content"] = msg.content or ""
+          
           # Convert HA ToolInput back to API tool_call format if present
           if msg.tool_calls:
                venice_msg["tool_calls"] = [
