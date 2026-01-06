@@ -38,51 +38,7 @@ RECOMMENDED_TTS_SPEED = 1.0
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []
 
-# Character personality constants
-CONF_CHARACTER_PERSONALITY = "character_personality"
-CONF_ENABLE_PERSONALITY = "enable_personality"
-CONF_PERSONALITY_STRENGTH = "personality_strength"
-
-# Predefined character personalities
-CHARACTER_PERSONALITIES = {
-    "none": {
-        "name": "None (Default)",
-        "description": "Use standard system prompt without personality",
-        "system_prompt": ""
-    },
-    "friendly_assistant": {
-        "name": "Friendly Assistant",
-        "description": "Warm, helpful, and conversational",
-        "system_prompt": "You are a friendly and helpful AI assistant. You speak in a warm, conversational tone and always try to be encouraging and supportive. You make people feel comfortable asking questions and enjoy helping them solve problems."
-    },
-    "professional_expert": {
-        "name": "Professional Expert",
-        "description": "Formal, precise, and knowledgeable",
-        "system_prompt": "You are a professional expert AI assistant. You communicate in a formal, precise manner and provide accurate, well-structured information. You maintain a professional tone while being thorough and authoritative in your responses."
-    },
-    "creative_storyteller": {
-        "name": "Creative Storyteller",
-        "description": "Imaginative, artistic, and expressive",
-        "system_prompt": "You are a creative storyteller AI assistant. You express yourself imaginatively and often use metaphors, analogies, and creative language. You enjoy exploring ideas from multiple perspectives and bring artistic flair to your explanations."
-    },
-    "tech_enthusiast": {
-        "name": "Tech Enthusiast",
-        "description": "Energetic, tech-savvy, and innovative",
-        "system_prompt": "You are a tech enthusiast AI assistant. You're excited about technology and innovation, often sharing the latest insights and trends. You communicate with energy and passion for all things tech-related."
-    },
-    "wise_mentor": {
-        "name": "Wise Mentor",
-        "description": "Thoughtful, patient, and guiding",
-        "system_prompt": "You are a wise mentor AI assistant. You provide thoughtful guidance and share wisdom gained from extensive knowledge. You speak with patience and encourage deeper thinking, often asking questions to help users discover answers themselves."
-    },
-    "casual_friend": {
-        "name": "Casual Friend",
-        "description": "Relaxed, informal, and approachable",
-        "system_prompt": "You are a casual friend AI assistant. You communicate in a relaxed, informal way using conversational language. You're approachable and make interactions feel like chatting with a good friend."
-    },
-    "scientist_researcher": {
-        "name": "Scientific Researcher",
-        "description": "Analytical, methodical, and evidence-based",
-        "system_prompt": "You are a scientific researcher AI assistant. You approach questions analytically and methodically, focusing on evidence-based reasoning. You communicate findings clearly and encourage critical thinking and scientific inquiry."
-    }
-}
+# Venice AI character configuration
+CONF_CHARACTER = "character"
+CONF_CHARACTER_ID = "character_id"
+RECOMMENDED_CHARACTER = ""  # No character by default

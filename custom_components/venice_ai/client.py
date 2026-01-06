@@ -203,6 +203,65 @@ class Models:
             raise VeniceAIError("Failed to decode models API response") from err
 
 
+class Characters:
+    """Characters API for Venice AI."""
+
+    def __init__(self, client: "AsyncVeniceAIClient") -> None:
+        """Initialize characters API."""
+        self.client = client
+
+    async def list(self) -> list[dict]:
+        """List available characters."""
+        response_text = None
+        try:
+            response = await self.client._http_client.get(
+                f"{self.client._base_url}/characters",
+                headers=self.client._headers,
+            )
+            response_text = response.text
+            response.raise_for_status()
+            character_data = response.json()
+            characters = character_data.get("data", [])
+            _LOGGER.debug("Successfully fetched %d characters", len(characters))
+            return characters
+        except httpx.HTTPStatusError as err:
+            error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
+            _LOGGER.error("Venice AI Characters API HTTP error %s: %s", err.response.status_code, error_detail)
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key for characters") from err
+            raise VeniceAIError(f"HTTP error fetching characters {err.response.status_code}: {error_detail}") from err
+        except httpx.RequestError as err:
+            _LOGGER.error("Venice AI Characters API request error: %s", err)
+            raise VeniceAIError(f"Request error fetching characters: {err}") from err
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Failed to decode characters JSON response: %s", response_text)
+            raise VeniceAIError("Failed to decode characters API response") from err
+
+    async def get(self, character_id: str) -> dict:
+        """Get character details by ID."""
+        response_text = None
+        try:
+            response = await self.client._http_client.get(
+                f"{self.client._base_url}/characters/{character_id}",
+                headers=self.client._headers,
+            )
+            response_text = response.text
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as err:
+            error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
+            _LOGGER.error("Venice AI Character API HTTP error %s: %s", err.response.status_code, error_detail)
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key for character") from err
+            raise VeniceAIError(f"HTTP error fetching character {err.response.status_code}: {error_detail}") from err
+        except httpx.RequestError as err:
+            _LOGGER.error("Venice AI Character API request error: %s", err)
+            raise VeniceAIError(f"Request error fetching character: {err}") from err
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Failed to decode character JSON response: %s", response_text)
+            raise VeniceAIError("Failed to decode character API response") from err
+
+
 class Voices:
     """Voices API for Venice AI."""
 
@@ -326,6 +385,7 @@ class AsyncVeniceAIClient:
         # Initialize API endpoints
         self.chat = ChatCompletions(self)
         self.models = Models(self)
+        self.characters = Characters(self)
         self.voices = Voices(self)
         self.speech = Speech(self)
         # Note: Image generation client part is missing based on original file
