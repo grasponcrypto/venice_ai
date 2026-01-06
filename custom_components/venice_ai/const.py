@@ -42,3 +42,9 @@ UNSUPPORTED_MODELS = []
 CONF_CHARACTER = "character"
 CONF_CHARACTER_ID = "character_id"
 RECOMMENDED_CHARACTER = ""  # No character by default
+
+# Curated character list - only show approved characters
+CURATED_CHARACTERS = [
+    "character-chat/1DdptTVK",  # User's custom character
+    # Add more community-curated characters here as needed
+]

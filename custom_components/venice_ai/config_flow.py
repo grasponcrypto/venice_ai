@@ -45,6 +45,7 @@ from .const import (
     CONF_TTS_SPEED,
     CONF_CHARACTER,
     CONF_CHARACTER_ID,
+    CURATED_CHARACTERS,
     DOMAIN,
     LOGGER,  # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -264,21 +265,23 @@ class VeniceAIOptionsFlow(OptionsFlow):
         ]
 
 
-        # Fetch characters if client is available (best effort)
+        # Fetch curated characters only if client is available
         characters_options: list[SelectOptionDict] = [
             SelectOptionDict(value="", label="No Character")
         ]
         
         if self._client:
             try:
-                LOGGER.debug("Fetching characters for options flow")
+                LOGGER.debug("Fetching curated characters for options flow")
                 characters_response = await self._client.characters.list()
                 
                 if characters_response and isinstance(characters_response, list):
                     fetched_characters = []
                     for character in characters_response:
                         character_id = character.get("id")
-                        if not character_id:
+                        
+                        # Only include curated characters
+                        if not character_id or character_id not in CURATED_CHARACTERS:
                             continue
                         
                         character_name = character.get("name", character_id)
@@ -290,7 +293,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     # Sort characters alphabetically by label
                     fetched_characters.sort(key=lambda x: x["label"])
                     characters_options.extend(fetched_characters)
-                    LOGGER.debug("Found %d characters", len(fetched_characters))
+                    LOGGER.debug("Found %d curated characters", len(fetched_characters))
                 else:
                     LOGGER.error("Invalid characters response structure: expected list, got %s", type(characters_response))
                     

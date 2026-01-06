@@ -325,16 +325,50 @@ class VeniceAIConversationEntity(ConversationEntity):
             # Determine character to use
             character_id = options.get(CONF_CHARACTER_ID) or options.get(CONF_CHARACTER)
             
+            # Fetch character details if a character is selected
+            character_details = None
+            if character_id:
+                try:
+                    _LOGGER.debug("Fetching character details for: %s", character_id)
+                    character_details = await client.characters.get(character_id)
+                    _LOGGER.debug("Character details retrieved: %s", character_details.get("name", "Unknown"))
+                except Exception as err:
+                    _LOGGER.warning("Failed to fetch character details for %s: %s", character_id, err)
+                    # Continue without character details - use manual settings
+            
+            # Override settings with character-specific values if available
+            effective_model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+            effective_max_tokens = options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
+            effective_temperature = options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
+            effective_top_p = options.get(CONF_TOP_P, RECOMMENDED_TOP_P)
+            
+            if character_details:
+                # Override with character settings
+                character_settings = character_details.get("settings", {})
+                
+                if character_settings.get("model"):
+                    effective_model = character_settings["model"]
+                    _LOGGER.debug("Using character model: %s", effective_model)
+                
+                if character_settings.get("max_tokens"):
+                    effective_max_tokens = character_settings["max_tokens"]
+                    _LOGGER.debug("Using character max_tokens: %s", effective_max_tokens)
+                
+                if character_settings.get("temperature") is not None:
+                    effective_temperature = character_settings["temperature"]
+                    _LOGGER.debug("Using character temperature: %s", effective_temperature)
+                
+                if character_settings.get("top_p") is not None:
+                    effective_top_p = character_settings["top_p"]
+                    _LOGGER.debug("Using character top_p: %s", effective_top_p)
+            
             for _iteration in range(MAX_TOOL_ITERATIONS):
                  api_request_payload = {
-                      "model": _build_model_name(
-                          options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
-                          options
-                      ),
+                      "model": _build_model_name(effective_model, options),
                       "messages": next_api_request_messages, # Send current message list
-                      "max_tokens": options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
-                      "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
-                      "top_p": options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+                      "max_tokens": effective_max_tokens,
+                      "temperature": effective_temperature,
+                      "top_p": effective_top_p,
                       "venice_parameters": {
                           "include_venice_system_prompt": False,
                           **({"character": character_id} if character_id else {})
@@ -343,9 +377,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                       **({"tools": tools} if tools else {}),
                  }
                  
-                 # Log character usage for debugging
+                 # Log character usage and settings for debugging
                  if character_id:
-                      _LOGGER.debug("Using Venice AI character: %s", character_id)
+                      _LOGGER.debug("Using Venice AI character: %s with model: %s", character_id, effective_model)
 
                  response_data = await client.chat.create_non_streaming(api_request_payload)
 
