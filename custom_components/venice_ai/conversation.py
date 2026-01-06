@@ -24,6 +24,7 @@ from .const import (
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
+    CONF_CHARACTER_CHAT_ID,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
@@ -321,6 +322,12 @@ class VeniceAIConversationEntity(ConversationEntity):
             next_api_request_messages = messages # Start with full current history
 
             for _iteration in range(MAX_TOOL_ITERATIONS):
+                 # Add character parameter if configured
+                 venice_parameters = {"include_venice_system_prompt": False}
+                 character_id = options.get(CONF_CHARACTER_CHAT_ID, "").strip()
+                 if character_id:
+                     venice_parameters["character"] = f"character-chat/{character_id}"
+
                  api_request_payload = {
                       "model": _build_model_name(
                           options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
@@ -330,7 +337,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                       "max_tokens": options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
                       "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                       "top_p": options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
-                      "venice_parameters": {"include_venice_system_prompt": False},
+                      "venice_parameters": venice_parameters,
                       "stream": False,
                       **({"tools": tools} if tools else {}),
                  }

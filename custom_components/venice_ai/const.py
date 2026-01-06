@@ -35,5 +35,8 @@ RECOMMENDED_TTS_RESPONSE_FORMAT = "mp3"
 CONF_TTS_SPEED = "tts_speed"
 RECOMMENDED_TTS_SPEED = 1.0
 
+# Venice AI character chat support
+CONF_CHARACTER_CHAT_ID = "character_chat_id"
+
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []
