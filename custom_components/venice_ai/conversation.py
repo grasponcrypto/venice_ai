@@ -24,6 +24,10 @@ from .const import (
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
+    CONF_CHARACTER_PERSONALITY,
+    CONF_ENABLE_PERSONALITY,
+    CONF_PERSONALITY_STRENGTH,
+    CHARACTER_PERSONALITIES,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
@@ -180,6 +184,49 @@ def _convert_to_venice_message(msg: SystemContent | UserContent | AssistantConte
 
 # --- End Helper Functions ---
 
+def _build_enhanced_prompt(options: dict[str, Any]) -> str:
+    """Build an enhanced system prompt that combines personality with Home Assistant functionality."""
+    enable_personality = options.get(CONF_ENABLE_PERSONALITY, False)
+    personality_type = options.get(CONF_CHARACTER_PERSONALITY, "none")
+    personality_strength = options.get(CONF_PERSONALITY_STRENGTH, 0.7)
+    user_prompt = options.get(CONF_PROMPT, "")
+    
+    # Start with the user's custom prompt if provided
+    prompt_parts = []
+    if user_prompt and user_prompt.strip():
+        prompt_parts.append(user_prompt.strip())
+    
+    # Add personality if enabled
+    if enable_personality and personality_type in CHARACTER_PERSONALITIES:
+        personality_data = CHARACTER_PERSONALITIES[personality_type]
+        personality_prompt = personality_data.get("system_prompt", "")
+        
+        if personality_prompt and personality_strength > 0:
+            # Scale the personality based on strength
+            if personality_strength < 1.0:
+                # For lower strength, make the personality more subtle
+                personality_prompt = f"Adopt a {personality_strength:.0%} {personality_data['name'].lower()} communication style. {personality_prompt}"
+            
+            prompt_parts.append(personality_prompt)
+            
+            # Add guidance on balancing personality with functionality
+            balance_guidance = f"""
+While maintaining your {personality_data['name'].lower()} communication style, prioritize:
+1. Clear, helpful responses to user requests
+2. Proper use of available Home Assistant tools and functions
+3. Accuracy and reliability in Home Assistant operations
+4. User safety and privacy when controlling devices
+
+Your personality should enhance the interaction experience without compromising the core functionality of helping users manage their smart home."""
+            
+            prompt_parts.append(balance_guidance)
+    
+    # Always include the default Home Assistant instructions
+    prompt_parts.append(DEFAULT_SYSTEM_PROMPT)
+    
+    # Join all parts with appropriate spacing
+    return "\n\n".join(prompt_parts)
+
 def _build_model_name(base_model: str, options: dict[str, Any]) -> str:
     """Build the model name with reasoning options suffixes."""
     model_name = base_model
@@ -282,8 +329,8 @@ class VeniceAIConversationEntity(ConversationEntity):
         hass = self.hass
 
         try:
-            # 1. Provide LLM data (prompt + selected tool providers) to the chat log
-            prompt_template = (options.get(CONF_PROMPT) or "") + ("\n\n" if options.get(CONF_PROMPT) else "") + DEFAULT_SYSTEM_PROMPT
+            # 1. Build enhanced prompt with personality and provide LLM data to chat log
+            prompt_template = _build_enhanced_prompt(options)
             llm_api_ids = options.get(CONF_LLM_HASS_API) or []
             if not isinstance(llm_api_ids, list):
                 llm_api_ids = []

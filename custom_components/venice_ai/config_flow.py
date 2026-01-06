@@ -43,6 +43,10 @@ from .const import (
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
+    CONF_CHARACTER_PERSONALITY,
+    CONF_ENABLE_PERSONALITY,
+    CONF_PERSONALITY_STRENGTH,
+    CHARACTER_PERSONALITIES,
     DOMAIN,
     LOGGER,  # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -116,6 +120,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
                     CONF_STRIP_THINKING_RESPONSE: False,
                     CONF_DISABLE_THINKING: False,
+                    # Character personality defaults
+                    CONF_ENABLE_PERSONALITY: False,
+                    CONF_CHARACTER_PERSONALITY: "none",
+                    CONF_PERSONALITY_STRENGTH: 0.7,
                 }
                 return self.async_create_entry(
                     title="Venice AI", data=user_input, options=initial_options
@@ -274,6 +282,29 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     mode=SelectSelectorMode.DROPDOWN,
                     # translation_key can be added for frontend i18n
                 )
+            ),
+            # --- Character Personality ---
+            vol.Optional(
+                CONF_ENABLE_PERSONALITY,
+                default=self.config_entry.options.get(CONF_ENABLE_PERSONALITY, False)
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_CHARACTER_PERSONALITY,
+                default=self.config_entry.options.get(CONF_CHARACTER_PERSONALITY, "none")
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value=key, label=value["name"])
+                        for key, value in CHARACTER_PERSONALITIES.items()
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_PERSONALITY_STRENGTH,
+                default=self.config_entry.options.get(CONF_PERSONALITY_STRENGTH, 0.7)
+            ): NumberSelector(
+                NumberSelectorConfig(min=0.1, max=1.0, step=0.1, mode="slider")
             ),
             # --- Prompt ---
             vol.Optional(

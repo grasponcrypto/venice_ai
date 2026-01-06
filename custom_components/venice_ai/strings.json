@@ -24,6 +24,9 @@
           "description": "Configure Venice AI settings. Only models with function calling support are shown.",
           "data": {
             "chat_model": "AI Model",
+            "enable_personality": "Enable Character Personality",
+            "character_personality": "Character Personality",
+            "personality_strength": "Personality Strength",
             "prompt": "System Prompt",
             "llm_hass_api": "Control Home Assistant",
             "temperature": "Temperature (0-2)",
