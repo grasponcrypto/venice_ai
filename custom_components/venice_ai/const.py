@@ -37,3 +37,8 @@ RECOMMENDED_TTS_SPEED = 1.0
 
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []
+
+# Venice AI character configuration
+CONF_CHARACTER = "character"
+CONF_CHARACTER_ID = "character_id"
+RECOMMENDED_CHARACTER = ""  # No character by default

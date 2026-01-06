@@ -43,6 +43,8 @@ from .const import (
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
+    CONF_CHARACTER,
+    CONF_CHARACTER_ID,
     DOMAIN,
     LOGGER,  # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -54,6 +56,7 @@ from .const import (
     RECOMMENDED_TTS_VOICE,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_CHARACTER,
 )
 # Import the default prompt from the updated conversation module
 try:
@@ -261,6 +264,41 @@ class VeniceAIOptionsFlow(OptionsFlow):
         ]
 
 
+        # Fetch characters if client is available (best effort)
+        characters_options: list[SelectOptionDict] = [
+            SelectOptionDict(value="", label="No Character")
+        ]
+        
+        if self._client:
+            try:
+                LOGGER.debug("Fetching characters for options flow")
+                characters_response = await self._client.characters.list()
+                
+                if characters_response and isinstance(characters_response, list):
+                    fetched_characters = []
+                    for character in characters_response:
+                        character_id = character.get("id")
+                        if not character_id:
+                            continue
+                        
+                        character_name = character.get("name", character_id)
+                        fetched_characters.append(SelectOptionDict(
+                            value=character_id,
+                            label=character_name
+                        ))
+                    
+                    # Sort characters alphabetically by label
+                    fetched_characters.sort(key=lambda x: x["label"])
+                    characters_options.extend(fetched_characters)
+                    LOGGER.debug("Found %d characters", len(fetched_characters))
+                else:
+                    LOGGER.error("Invalid characters response structure: expected list, got %s", type(characters_response))
+                    
+            except Exception as err:
+                LOGGER.error("Error fetching characters for options flow: %s", err)
+        else:
+            LOGGER.warning("Venice AI client not available for character fetching")
+
         # Define the schema for the options form
         # Use current option value as default for the form field
         options_schema_dict = {
@@ -275,6 +313,21 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     # translation_key can be added for frontend i18n
                 )
             ),
+            # --- Character Selection ---
+            vol.Optional(
+                CONF_CHARACTER,
+                default=self.config_entry.options.get(CONF_CHARACTER, RECOMMENDED_CHARACTER)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=characters_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            # --- Character ID (Manual Input) ---
+            vol.Optional(
+                CONF_CHARACTER_ID,
+                default=self.config_entry.options.get(CONF_CHARACTER_ID, "")
+            ): str,
             # --- Prompt ---
             vol.Optional(
                 CONF_PROMPT,

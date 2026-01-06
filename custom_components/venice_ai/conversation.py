@@ -24,6 +24,8 @@ from .const import (
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
+    CONF_CHARACTER,
+    CONF_CHARACTER_ID,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
@@ -320,6 +322,9 @@ class VeniceAIConversationEntity(ConversationEntity):
             assistant_response_content = None # Final text response
             next_api_request_messages = messages # Start with full current history
 
+            # Determine character to use
+            character_id = options.get(CONF_CHARACTER_ID) or options.get(CONF_CHARACTER)
+            
             for _iteration in range(MAX_TOOL_ITERATIONS):
                  api_request_payload = {
                       "model": _build_model_name(
@@ -330,10 +335,17 @@ class VeniceAIConversationEntity(ConversationEntity):
                       "max_tokens": options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
                       "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                       "top_p": options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
-                      "venice_parameters": {"include_venice_system_prompt": False},
+                      "venice_parameters": {
+                          "include_venice_system_prompt": False,
+                          **({"character": character_id} if character_id else {})
+                      },
                       "stream": False,
                       **({"tools": tools} if tools else {}),
                  }
+                 
+                 # Log character usage for debugging
+                 if character_id:
+                      _LOGGER.debug("Using Venice AI character: %s", character_id)
 
                  response_data = await client.chat.create_non_streaming(api_request_payload)
 
