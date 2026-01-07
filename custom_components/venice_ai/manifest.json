@@ -3,6 +3,7 @@
     "name": "VeniceAI",
     "version": "1.0.0",
     "documentation": "https://github.com/grasponcrypto/venice_ai",
+    "issue_tracker": "https://github.com/grasponcrypto/venice_ai/issues",
     "requirements": ["aiohttp>=3.8.0"],
     "dependencies": ["conversation"],
     "after_dependencies": ["assist_pipeline", "intent"],
