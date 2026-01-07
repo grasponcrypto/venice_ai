@@ -254,7 +254,8 @@ class Characters:
             response.raise_for_status()
             character_data = response.json()
             _LOGGER.debug("Successfully validated character: %s", slug)
-            return character_data
+            # Return the data field, not the entire response
+            return character_data.get("data")
         except httpx.HTTPStatusError as err:
             error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
             _LOGGER.error("Venice AI Characters API HTTP error %s: %s", err.response.status_code, error_detail)

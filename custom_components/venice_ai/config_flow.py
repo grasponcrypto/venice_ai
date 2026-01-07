@@ -150,6 +150,8 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
         # Handle form submission
         if user_input is not None:
+            errors: dict[str, str] = {}  # Initialize errors dict
+            
             # Validate character ID if provided
             character_id = user_input.get(CONF_CHARACTER_CHAT_ID, "").strip()
             if character_id:
