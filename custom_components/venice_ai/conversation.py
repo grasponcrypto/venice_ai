@@ -284,7 +284,15 @@ class VeniceAIConversationEntity(ConversationEntity):
 
         try:
             # 1. Provide LLM data (prompt + selected tool providers) to the chat log
-            prompt_template = (options.get(CONF_PROMPT) or "") + ("\n\n" if options.get(CONF_PROMPT) else "") + DEFAULT_SYSTEM_PROMPT
+            # Only use prompt template if NO character is selected
+            character_id = options.get(CONF_CHARACTER_CHAT_ID, "").strip()
+            if character_id:
+                # When using a character, don't send custom prompt - let the character's system prompt handle it
+                prompt_template = ""
+            else:
+                # When no character, use the custom prompt + default system prompt
+                prompt_template = (options.get(CONF_PROMPT) or "") + ("\n\n" if options.get(CONF_PROMPT) else "") + DEFAULT_SYSTEM_PROMPT
+            
             llm_api_ids = options.get(CONF_LLM_HASS_API) or []
             if not isinstance(llm_api_ids, list):
                 llm_api_ids = []
@@ -324,7 +332,6 @@ class VeniceAIConversationEntity(ConversationEntity):
             for _iteration in range(MAX_TOOL_ITERATIONS):
                  # Add character parameter if configured
                  venice_parameters = {"include_venice_system_prompt": False}
-                 character_id = options.get(CONF_CHARACTER_CHAT_ID, "").strip()
                  if character_id:
                      venice_parameters["character"] = character_id
 
