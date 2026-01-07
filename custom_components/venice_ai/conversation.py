@@ -326,7 +326,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                  venice_parameters = {"include_venice_system_prompt": False}
                  character_id = options.get(CONF_CHARACTER_CHAT_ID, "").strip()
                  if character_id:
-                     venice_parameters["character"] = f"character-chat/{character_id}"
+                     venice_parameters["character"] = character_id
 
                  api_request_payload = {
                       "model": _build_model_name(

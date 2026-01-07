@@ -32,7 +32,8 @@
             "max_tokens": "Max Tokens",
             "strip_thinking_response": "Strip thinking response (for reasoning models)",
             "disable_thinking": "Disable thinking (for reasoning models)",
-            "character_chat_id": "Character ID (e.g., 1DdptTVK)"
+            "character_chat_id": "Character ID (e.g., sophia-sophie-daniels, molly, etc.)",
+            "character_chat_id_description": "Enter the character slug from Venice AI. Find characters at: <a href='https://venice.ai/character-chat/public' target='_blank'>venice.ai/character-chat/public</a>"
           }
         }
       }

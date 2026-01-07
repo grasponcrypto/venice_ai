@@ -392,7 +392,8 @@ class VeniceAIOptionsFlow(OptionsFlow):
             # --- Character Chat ID ---
             vol.Optional(
                 CONF_CHARACTER_CHAT_ID,
-                default=self.config_entry.options.get(CONF_CHARACTER_CHAT_ID, "")
+                default=self.config_entry.options.get(CONF_CHARACTER_CHAT_ID, ""),
+                description={"suggested_value": self.config_entry.options.get(CONF_CHARACTER_CHAT_ID, "")}
             ): str,
         }
 

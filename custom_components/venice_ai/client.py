@@ -210,6 +210,33 @@ class Characters:
         """Initialize characters API."""
         self.client = client
 
+    async def list(self) -> list[dict[str, Any]]:
+        """List available public characters."""
+        response_text = None
+        try:
+            response = await self.client._http_client.get(
+                f"{self.client._base_url}/characters",
+                headers=self.client._headers,
+            )
+            response_text = response.text
+            response.raise_for_status()
+            character_data = response.json()
+            characters = character_data.get("data", [])
+            _LOGGER.debug("Successfully fetched %d characters", len(characters))
+            return characters
+        except httpx.HTTPStatusError as err:
+            error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
+            _LOGGER.error("Venice AI Characters API HTTP error %s: %s", err.response.status_code, error_detail)
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key for character listing") from err
+            raise VeniceAIError(f"HTTP error fetching characters {err.response.status_code}: {error_detail}") from err
+        except httpx.RequestError as err:
+            _LOGGER.error("Venice AI Characters API request error: %s", err)
+            raise VeniceAIError(f"Request error fetching characters: {err}") from err
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Failed to decode characters JSON response: %s", response_text)
+            raise VeniceAIError("Failed to decode characters API response") from err
+
     async def get(self, character_id: str) -> dict[str, Any] | None:
         """Get character details by ID for validation."""
         if not character_id:
@@ -217,15 +244,16 @@ class Characters:
             
         response_text = None
         try:
-            full_character_id = f"character-chat/{character_id}" if not character_id.startswith("character-chat/") else character_id
+            # Remove any prefix like "character-chat/" and use just the slug
+            slug = character_id.split("/")[-1] if "/" in character_id else character_id
             response = await self.client._http_client.get(
-                f"{self.client._base_url}/characters/{full_character_id}",
+                f"{self.client._base_url}/characters/{slug}",
                 headers=self.client._headers,
             )
             response_text = response.text
             response.raise_for_status()
             character_data = response.json()
-            _LOGGER.debug("Successfully validated character: %s", full_character_id)
+            _LOGGER.debug("Successfully validated character: %s", slug)
             return character_data
         except httpx.HTTPStatusError as err:
             error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
