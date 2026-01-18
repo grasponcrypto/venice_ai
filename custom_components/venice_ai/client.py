@@ -202,48 +202,6 @@ class Models:
             _LOGGER.error("Failed to decode models JSON response: %s", response_text)
             raise VeniceAIError("Failed to decode models API response") from err
 
-
-class Characters:
-    """Characters API for Venice AI."""
-
-    def __init__(self, client: "AsyncVeniceAIClient") -> None:
-        """Initialize characters API."""
-        self.client = client
-
-    async def get(self, character_id: str) -> dict[str, Any] | None:
-        """Get character details by ID for validation."""
-        if not character_id:
-            return None
-            
-        response_text = None
-        try:
-            full_character_id = f"character-chat/{character_id}" if not character_id.startswith("character-chat/") else character_id
-            response = await self.client._http_client.get(
-                f"{self.client._base_url}/characters/{full_character_id}",
-                headers=self.client._headers,
-            )
-            response_text = response.text
-            response.raise_for_status()
-            character_data = response.json()
-            _LOGGER.debug("Successfully validated character: %s", full_character_id)
-            return character_data
-        except httpx.HTTPStatusError as err:
-            error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
-            _LOGGER.error("Venice AI Characters API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key for character validation") from err
-            if err.response.status_code == 404:
-                _LOGGER.warning("Character not found: %s", character_id)
-                return None
-            raise VeniceAIError(f"HTTP error validating character {err.response.status_code}: {error_detail}") from err
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI Characters API request error: %s", err)
-            raise VeniceAIError(f"Request error validating character: {err}") from err
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode character JSON response: %s", response_text)
-            raise VeniceAIError("Failed to decode character API response") from err
-
-
 class Voices:
     """Voices API for Venice AI."""
 
@@ -367,7 +325,6 @@ class AsyncVeniceAIClient:
         # Initialize API endpoints
         self.chat = ChatCompletions(self)
         self.models = Models(self)
-        self.characters = Characters(self)
         self.voices = Voices(self)
         self.speech = Speech(self)
         # Note: Image generation client part is missing based on original file

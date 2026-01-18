@@ -43,7 +43,6 @@ from .const import (
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
-    CONF_CHARACTER_CHAT_ID,
     DOMAIN,
     LOGGER,  # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -148,25 +147,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Manage the options for the Venice AI integration."""
 
+        errors: dict[str, str] = {}
+
         # Handle form submission
         if user_input is not None:
-            # Validate character ID if provided
-            character_id = user_input.get(CONF_CHARACTER_CHAT_ID, "").strip()
-            if character_id:
-                if not self._client:
-                    errors["base"] = "cannot_connect"
-                    LOGGER.error("Cannot validate character: Venice AI client not available")
-                else:
-                    try:
-                        # Validate character exists
-                        character_data = await self._client.characters.get(character_id)
-                        if not character_data:
-                            errors[CONF_CHARACTER_CHAT_ID] = "invalid_character"
-                            LOGGER.warning("Character validation failed: %s not found", character_id)
-                    except VeniceAIError as err:
-                        errors[CONF_CHARACTER_CHAT_ID] = "invalid_character"
-                        LOGGER.error("Character validation error: %s", err)
-
             # If no errors, proceed with saving
             if not errors:
                 # Normalize/sanitize selected tool API IDs to avoid stale values
@@ -187,17 +171,12 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 updated_options = {**self.config_entry.options, **user_input}
                 # Always persist sanitized tool IDs to drop stale ones
                 updated_options[CONF_LLM_HASS_API] = selected_ids
-                
-                # Clean character ID - strip whitespace
-                if updated_options.get(CONF_CHARACTER_CHAT_ID):
-                    updated_options[CONF_CHARACTER_CHAT_ID] = updated_options[CONF_CHARACTER_CHAT_ID].strip()
 
                 # Create/update the entry with the new options
                 return self.async_create_entry(title="", data=updated_options)
 
 
         # --- Prepare form schema ---
-        errors: dict[str, str] = {}
         models_options: list[SelectOptionDict] = [
               SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
         ]
@@ -389,11 +368,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
             ): NumberSelector(
                 NumberSelectorConfig(min=0.1, max=3.0, step=0.1, mode="slider")
             ),
-            # --- Character Chat ID ---
-            vol.Optional(
-                CONF_CHARACTER_CHAT_ID,
-                default=self.config_entry.options.get(CONF_CHARACTER_CHAT_ID, "")
-            ): str,
         }
 
         options_schema = vol.Schema(options_schema_dict)
