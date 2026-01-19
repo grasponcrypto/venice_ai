@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from homeassistant.components.stt import (
-    SpeechToTextEntity,
+    Provider,
     SpeechResult,
     SpeechResultState,
 )
@@ -48,7 +48,7 @@ async def async_setup_entry(
     )
 
 
-class VeniceAISTT(SpeechToTextEntity):
+class VeniceAISTT(Provider):
     """The Venice AI Speech-to-Text integration."""
 
     def __init__(
@@ -75,40 +75,51 @@ class VeniceAISTT(SpeechToTextEntity):
     @property
     def supported_formats(self) -> list[str]:
         """Return list of supported audio formats."""
-        return ["wav", "wave", "flac", "m4a", "aac", "mp4", "mp3"]
+        return ["wav", "wave", "flac"]
 
-    async def async_process(
+    @property
+    def supported_sample_rates(self) -> list[int]:
+        """Return list of supported sample rates in Hz."""
+        return [16000]
+
+    @property
+    def supported_codecs(self) -> list[str]:
+        """Return list of supported audio codecs."""
+        return ["pcm"]
+
+    @property
+    def supported_bit_rates(self) -> list[int]:
+        """Return list of supported bit rates in bps."""
+        return [16000]
+
+    @property
+    def supported_channels(self) -> list[int]:
+        """Return list of supported channel counts."""
+        return [1]
+
+    async def async_process_audio_stream(
         self,
-        audio_data: bytes | str,
-        language: str | None = None,
+        stream,
+        metadata: dict[str, Any] | None = None,
     ) -> SpeechResult:
-        """Process audio data to text."""
+        """Process an audio stream to text."""
         from .client import AsyncVeniceAIClient, VeniceAIError
 
-        client: AsyncVeniceAIClient = self._entry.runtime_data
-
-        # If audio_data is a file path, read the file
-        if isinstance(audio_data, str):
-            try:
-                audio_path = Path(audio_data)
-                if not audio_path.exists():
-                    LOGGER.error("Audio file not found: %s", audio_path)
-                    return SpeechResult(
-                        text="", result_state=SpeechResultState.ERROR
-                    )
-                audio_data = audio_path.read_bytes()
-                LOGGER.debug("Read audio file: %s (%d bytes)", audio_path, len(audio_data))
-            except Exception as err:
-                LOGGER.error("Error reading audio file: %s", err)
-                return SpeechResult(text="", result_state=SpeechResultState.ERROR)
-
         try:
+            # Read all data from the stream
+            audio_data = b""
+            async for chunk in stream:
+                audio_data += chunk
+
             LOGGER.debug(
-                "Starting transcription with model=%s, format=%s, timestamps=%s",
+                "Processing audio stream (%d bytes) with model=%s, format=%s, timestamps=%s",
+                len(audio_data),
                 self._model,
                 self._response_format,
                 self._timestamps,
             )
+
+            client: AsyncVeniceAIClient = self._entry.runtime_data
 
             result = await client.transcriptions.create(
                 audio_data=audio_data,
