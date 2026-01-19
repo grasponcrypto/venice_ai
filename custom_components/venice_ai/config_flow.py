@@ -43,6 +43,9 @@ from .const import (
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
+    CONF_STT_MODEL,
+    CONF_STT_RESPONSE_FORMAT,
+    CONF_STT_TIMESTAMPS,
     DOMAIN,
     LOGGER,  # Use existing logger
     RECOMMENDED_CHAT_MODEL,
@@ -54,6 +57,9 @@ from .const import (
     RECOMMENDED_TTS_VOICE,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_STT_MODEL,
+    RECOMMENDED_STT_RESPONSE_FORMAT,
+    RECOMMENDED_STT_TIMESTAMPS,
 )
 # Import the default prompt from the updated conversation module
 try:
@@ -366,6 +372,34 @@ class VeniceAIOptionsFlow(OptionsFlow):
             ): NumberSelector(
                 NumberSelectorConfig(min=0.1, max=3.0, step=0.1, mode="slider")
             ),
+            # --- STT Model Selection ---
+            vol.Optional(
+                CONF_STT_MODEL,
+                default=self.config_entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[SelectOptionDict(value=RECOMMENDED_STT_MODEL, label="NVIDIA Parakeet TDT 0.6B V3")],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            # --- STT Response Format ---
+            vol.Optional(
+                CONF_STT_RESPONSE_FORMAT,
+                default=self.config_entry.options.get(CONF_STT_RESPONSE_FORMAT, RECOMMENDED_STT_RESPONSE_FORMAT)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="json", label="JSON"),
+                        SelectOptionDict(value="text", label="Text"),
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            # --- STT Timestamps ---
+            vol.Optional(
+                CONF_STT_TIMESTAMPS,
+                default=self.config_entry.options.get(CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS)
+            ): BooleanSelector(),
         }
 
         options_schema = vol.Schema(options_schema_dict)

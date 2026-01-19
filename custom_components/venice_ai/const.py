@@ -37,3 +37,11 @@ RECOMMENDED_TTS_SPEED = 1.0
 
 # Venice AI doesn't have unsupported models list currently
 UNSUPPORTED_MODELS = []
+
+# Venice AI STT options
+CONF_STT_MODEL = "stt_model"
+RECOMMENDED_STT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
+CONF_STT_RESPONSE_FORMAT = "stt_response_format"
+RECOMMENDED_STT_RESPONSE_FORMAT = "json"
+CONF_STT_TIMESTAMPS = "stt_timestamps"
+RECOMMENDED_STT_TIMESTAMPS = False
