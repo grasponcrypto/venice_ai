@@ -10,6 +10,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient
+from .const import (
+    CONF_TTS_MODEL,
+    CONF_TTS_RESPONSE_FORMAT,
+    CONF_TTS_SPEED,
+    CONF_TTS_VOICE,
+    RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_RESPONSE_FORMAT,
+    RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_TTS_VOICE,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,7 +65,7 @@ class VeniceAITTS(TextToSpeechEntity):
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return ["tts_voice", "tts_model", "tts_response_format", "tts_speed"]
+        return [CONF_TTS_VOICE, CONF_TTS_MODEL, CONF_TTS_RESPONSE_FORMAT, CONF_TTS_SPEED]
 
     @property
     def default_options(self) -> dict[str, Any]:
