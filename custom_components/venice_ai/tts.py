@@ -65,7 +65,7 @@ class VeniceAITTS(TextToSpeechEntity):
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return ["tts_voice", "tts_model", "tts_response_format", "tts_speed"]
+        return [CONF_TTS_VOICE, CONF_TTS_MODEL, CONF_TTS_RESPONSE_FORMAT, CONF_TTS_SPEED]
 
     @property
     def default_options(self) -> dict[str, Any]:
@@ -77,27 +77,90 @@ class VeniceAITTS(TextToSpeechEntity):
             CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED,
         }
 
+    def _resolve(
+        self,
+        option_name: str,
+        runtime_options: dict[str, Any],
+        config_options: dict[str, Any],
+        default_value: Any,
+    ) -> Any:
+        """Resolve option value with three-tier fallback hierarchy (runtime → config → defaults)."""
+        # Check runtime options first
+        if option_name in runtime_options and runtime_options[option_name] is not None:
+            return runtime_options[option_name]
+        
+        # Check config options second
+        if option_name in config_options and config_options[option_name] is not None:
+            return config_options[option_name]
+        
+        # Return default value
+        return default_value
+
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
     ) -> TtsAudioType:
         """Generate TTS audio."""
+        # Add null safety
         options = options or {}
-        config_options = self._config_entry.options
+        config_options = self._config_entry.options or {}
 
-        def _resolve(option_name: str, default: Any) -> Any:
-            if option_name in options:
-                return options[option_name]
-            return config_options.get(option_name, default)
-
-        # Get all options from parameters or use defaults
-        voice = _resolve(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
-        model = _resolve(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        response_format = _resolve(CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT)
-        speed = _resolve(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
+        # Resolve all options with three-tier fallback hierarchy
+        voice = self._resolve(
+            CONF_TTS_VOICE,
+            options,
+            config_options,
+            RECOMMENDED_TTS_VOICE
+        )
+        model = self._resolve(
+            CONF_TTS_MODEL,
+            options,
+            config_options,
+            RECOMMENDED_TTS_MODEL
+        )
+        response_format = self._resolve(
+            CONF_TTS_RESPONSE_FORMAT,
+            options,
+            config_options,
+            RECOMMENDED_TTS_RESPONSE_FORMAT
+        )
+        speed = self._resolve(
+            CONF_TTS_SPEED,
+            options,
+            config_options,
+            RECOMMENDED_TTS_SPEED
+        )
 
         _LOGGER.debug("Generating TTS for message: %s", message)
         _LOGGER.debug(
-            "TTS options: voice=%s, model=%s, format=%s, speed=%s",
+            "TTS option resolution: voice=%s (runtime=%s, config=%s, default=%s)",
+            voice,
+            options.get(CONF_TTS_VOICE),
+            config_options.get(CONF_TTS_VOICE),
+            RECOMMENDED_TTS_VOICE
+        )
+        _LOGGER.debug(
+            "TTS option resolution: model=%s (runtime=%s, config=%s, default=%s)",
+            model,
+            options.get(CONF_TTS_MODEL),
+            config_options.get(CONF_TTS_MODEL),
+            RECOMMENDED_TTS_MODEL
+        )
+        _LOGGER.debug(
+            "TTS option resolution: format=%s (runtime=%s, config=%s, default=%s)",
+            response_format,
+            options.get(CONF_TTS_RESPONSE_FORMAT),
+            config_options.get(CONF_TTS_RESPONSE_FORMAT),
+            RECOMMENDED_TTS_RESPONSE_FORMAT
+        )
+        _LOGGER.debug(
+            "TTS option resolution: speed=%s (runtime=%s, config=%s, default=%s)",
+            speed,
+            options.get(CONF_TTS_SPEED),
+            config_options.get(CONF_TTS_SPEED),
+            RECOMMENDED_TTS_SPEED
+        )
+        _LOGGER.debug(
+            "Final TTS options: voice=%s, model=%s, format=%s, speed=%s",
             voice, model, response_format, speed
         )
 
