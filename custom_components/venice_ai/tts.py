@@ -10,6 +10,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient
+from .const import (
+    CONF_TTS_MODEL,
+    CONF_TTS_RESPONSE_FORMAT,
+    CONF_TTS_SPEED,
+    CONF_TTS_VOICE,
+    RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_RESPONSE_FORMAT,
+    RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_TTS_VOICE,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,21 +71,29 @@ class VeniceAITTS(TextToSpeechEntity):
     def default_options(self) -> dict[str, Any]:
         """Return default options."""
         return {
-            "tts_voice": "bm_daniel",
-            "tts_model": "tts-kokoro",
-            "tts_response_format": "wav",
-            "tts_speed": 1.0
+            CONF_TTS_VOICE: RECOMMENDED_TTS_VOICE,
+            CONF_TTS_MODEL: RECOMMENDED_TTS_MODEL,
+            CONF_TTS_RESPONSE_FORMAT: RECOMMENDED_TTS_RESPONSE_FORMAT,
+            CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED,
         }
 
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
     ) -> TtsAudioType:
         """Generate TTS audio."""
+        options = options or {}
+        config_options = self._config_entry.options
+
+        def _resolve(option_name: str, default: Any) -> Any:
+            if option_name in options:
+                return options[option_name]
+            return config_options.get(option_name, default)
+
         # Get all options from parameters or use defaults
-        voice = options.get("tts_voice", "bm_daniel")
-        model = options.get("tts_model", "tts-kokoro")
-        response_format = options.get("tts_response_format", "wav")
-        speed = options.get("tts_speed", 1.0)
+        voice = _resolve(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
+        model = _resolve(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        response_format = _resolve(CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT)
+        speed = _resolve(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
         _LOGGER.debug("Generating TTS for message: %s", message)
         _LOGGER.debug(
