@@ -174,3 +174,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# project specifics
+tasks/
+scripts/
+local_documents/
+.cline/
