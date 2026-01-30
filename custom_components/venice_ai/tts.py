@@ -71,10 +71,10 @@ class VeniceAITTS(TextToSpeechEntity):
     def default_options(self) -> dict[str, Any]:
         """Return default options."""
         return {
-            "tts_voice": "bm_daniel",
-            "tts_model": "tts-kokoro",
-            "tts_response_format": "wav",
-            "tts_speed": 1.0
+            CONF_TTS_VOICE: RECOMMENDED_TTS_VOICE,
+            CONF_TTS_MODEL: RECOMMENDED_TTS_MODEL,
+            CONF_TTS_RESPONSE_FORMAT: RECOMMENDED_TTS_RESPONSE_FORMAT,
+            CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED
         }
 
     def _resolve(
