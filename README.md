@@ -54,6 +54,14 @@ The current default model is Llama 3.3 70B (llama-3.3-70b), which provides excel
 
 For reasoning models like Venice Reasoning (qwen-2.5-qwq-32b) or DeepSeek R1 671B, you can disable thinking for lower latency by enabling the "Disable thinking" option in the configuration.
 
+## Contributing
+Contributions are welcome. Please keep changes focused and include tests for bug fixes or new behavior.
+
+To run tests locally:
+```bash
+python3 -m pytest -q
+```
+
 ## Support
 If you encounter any issues or have feature requests, please open an issue on our [GitHub Issues page](https://github.com/grasponcrypto/venice_ai/issues).
 
