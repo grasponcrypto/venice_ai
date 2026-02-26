@@ -54,6 +54,7 @@ from .const import (
     RECOMMENDED_TTS_VOICE,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
+    VENICE_TTS_VOICES,
 )
 # Import the default prompt from the updated conversation module
 try:
@@ -178,22 +179,9 @@ class VeniceAIOptionsFlow(OptionsFlow):
         models_options: list[SelectOptionDict] = [
               SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
         ]
-        # Hardcoded list of available voices
-        hardcoded_voices = [
-            "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jadzia", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
-            "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
-            "bf_alice", "bf_emma", "bf_lily",
-            "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
-            "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
-            "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
-            "ff_siwis", "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
-            "if_sara", "im_nicola",
-            "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
-            "pf_dora", "pm_alex", "pm_santa",
-            "ef_dora", "em_alex", "em_santa"
-        ]
         voices_options = [
-            SelectOptionDict(value=voice, label=voice) for voice in sorted(hardcoded_voices)
+            SelectOptionDict(value=voice, label=voice)
+            for voice in sorted(VENICE_TTS_VOICES)
         ]
 
         # Fetch models if client is available (best effort)
