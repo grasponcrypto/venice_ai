@@ -184,6 +184,13 @@ class VeniceAIOptionsFlow(OptionsFlow):
         models_options: list[SelectOptionDict] = [
               SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
         ]
+        # Default TTS/STT model options (used if API fetch fails)
+        tts_models_options: list[SelectOptionDict] = [
+            SelectOptionDict(value=RECOMMENDED_TTS_MODEL, label="TTS Kokoro Model")
+        ]
+        stt_models_options: list[SelectOptionDict] = [
+            SelectOptionDict(value=RECOMMENDED_STT_MODEL, label="NVIDIA Parakeet TDT 0.6B V3")
+        ]
         # Hardcoded list of available voices
         hardcoded_voices = [
             "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jadzia", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
@@ -205,8 +212,9 @@ class VeniceAIOptionsFlow(OptionsFlow):
         # Fetch models if client is available (best effort)
         if self._client:
             try:
-                LOGGER.debug("Fetching models for options flow")
-                models_response = await self._client.models.list()
+                # Fetch text models for chat
+                LOGGER.debug("Fetching text models for options flow")
+                models_response = await self._client.models.list(model_type="text")
 
                 # Venice AI returns a direct list of models, not {"data": [...]}
                 if models_response and isinstance(models_response, list):
@@ -233,11 +241,74 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     # Replace the default model option if we have real models
                     if fetched_models:
                         models_options = fetched_models
-                        LOGGER.debug("Found %d models with function calling support", len(fetched_models))
+                        LOGGER.debug("Found %d text models with function calling support", len(fetched_models))
                     else:
-                        LOGGER.warning("No models with function calling support found")
+                        LOGGER.warning("No text models with function calling support found")
                 else:
-                    LOGGER.error("Invalid models response structure: expected list, got %s", type(models_response))
+                    LOGGER.error("Invalid text models response structure: expected list, got %s", type(models_response))
+
+                # Fetch audio models for TTS and STT
+                LOGGER.debug("Fetching audio models for TTS/STT options flow")
+                audio_models_response = await self._client.models.list(model_type="audio")
+                
+                if audio_models_response and isinstance(audio_models_response, list):
+                    fetched_tts_models = []
+                    fetched_stt_models = []
+                    for model in audio_models_response:
+                        model_id = model.get("id")
+                        if not model_id:
+                            continue
+                        
+                        model_spec = model.get("model_spec", {})
+                        model_name = model_spec.get("name", model_id)
+                        capabilities = model_spec.get("capabilities", {})
+                        
+                        # Check if model supports TTS or STT
+                        # TTS models typically have "tts" in capabilities or id
+                        supports_tts = capabilities.get("supportsTTS", False) or "tts" in model_id.lower()
+                        # STT models typically have transcription/speech-to-text capabilities
+                        supports_stt = capabilities.get("supportsTranscription", False) or "parakeet" in model_id.lower() or "whisper" in model_id.lower()
+                        
+                        label = f"{model_name} ({model_id})"
+                        
+                        if supports_tts:
+                            fetched_tts_models.append(SelectOptionDict(value=model_id, label=label))
+                        if supports_stt:
+                            fetched_stt_models.append(SelectOptionDict(value=model_id, label=label))
+                    
+                    # If no specific TTS/STT flags found, categorize by model ID patterns
+                    if not fetched_tts_models and not fetched_stt_models:
+                        for model in audio_models_response:
+                            model_id = model.get("id")
+                            if not model_id:
+                                continue
+                            model_spec = model.get("model_spec", {})
+                            model_name = model_spec.get("name", model_id)
+                            label = f"{model_name} ({model_id})"
+                            
+                            # Default categorization logic
+                            if "tts" in model_id.lower() or "kokoro" in model_id.lower():
+                                fetched_tts_models.append(SelectOptionDict(value=model_id, label=label))
+                            elif "parakeet" in model_id.lower() or "whisper" in model_id.lower() or "stt" in model_id.lower():
+                                fetched_stt_models.append(SelectOptionDict(value=model_id, label=label))
+                            else:
+                                # Add to both as it might be a general audio model
+                                fetched_tts_models.append(SelectOptionDict(value=model_id, label=label))
+                                fetched_stt_models.append(SelectOptionDict(value=model_id, label=label))
+                    
+                    # Sort and update options
+                    if fetched_tts_models:
+                        fetched_tts_models.sort(key=lambda x: x["label"])
+                        tts_models_options = fetched_tts_models
+                        LOGGER.debug("Found %d TTS models", len(fetched_tts_models))
+                    
+                    if fetched_stt_models:
+                        fetched_stt_models.sort(key=lambda x: x["label"])
+                        stt_models_options = fetched_stt_models
+                        LOGGER.debug("Found %d STT models", len(fetched_stt_models))
+                        
+                else:
+                    LOGGER.debug("No audio models returned or invalid response structure")
 
             except AuthenticationError:
                 LOGGER.error("Authentication error fetching models for options flow")
@@ -336,7 +407,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 default=self.config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=[SelectOptionDict(value=RECOMMENDED_TTS_MODEL, label="TTS Kokoro Model")],
+                    options=tts_models_options,
                     mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
@@ -378,7 +449,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 default=self.config_entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=[SelectOptionDict(value=RECOMMENDED_STT_MODEL, label="NVIDIA Parakeet TDT 0.6B V3")],
+                    options=stt_models_options,
                     mode=SelectSelectorMode.DROPDOWN,
                 )
             ),

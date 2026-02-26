@@ -9,6 +9,5 @@
     "codeowners": ["@grasponcrypto"],
     "iot_class": "cloud_polling",
     "integration_type": "service",
-    "config_flow": true,
-    "supported_features": ["tts", "stt"]
+    "config_flow": true
 }

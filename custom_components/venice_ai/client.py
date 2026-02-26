@@ -171,22 +171,26 @@ class Models:
         # self._models_cache_time: float = 0
         # self._cache_ttl: float = 3600 # Cache models for 1 hour, example
 
-    async def list(self) -> list[dict]:
-        """List available models."""
+    async def list(self, model_type: str = "text") -> list[dict]:
+        """List available models.
+        
+        Args:
+            model_type: Type of models to fetch - "text", "audio", or "image"
+        """
         response_text = None # Initialize for error logging
         url = f"{self.client._base_url}/models"
-        _LOGGER.debug("Attempting to fetch models from URL: %s", url)
+        _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
         try:
             response = await self.client._http_client.get(
                 url,
                 headers=self.client._headers,
-                params={"type": "text"} # Spec shows type parameter
+                params={"type": model_type}
             )
             response_text = response.text
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
-            _LOGGER.debug("Successfully fetched %d models", len(models))
+            _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:
              # Handle errors similarly to chat completion calls
