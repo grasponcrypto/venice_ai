@@ -77,10 +77,8 @@ class VeniceAITTS(TextToSpeechEntity):
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
         return [
-            # Standard Home Assistant TTS options used by Voice Assistant UI.
             ATTR_VOICE,
             ATTR_AUDIO_OUTPUT,
-            # Backward-compatible integration-specific options.
             "tts_voice",
             "tts_model",
             "tts_response_format",
@@ -105,7 +103,6 @@ class VeniceAITTS(TextToSpeechEntity):
         if options is None:
             options = {}
 
-        # Support both Home Assistant standard keys and existing Venice keys.
         voice = options.get(ATTR_VOICE) or options.get("tts_voice", RECOMMENDED_TTS_VOICE)
         model = options.get("tts_model", RECOMMENDED_TTS_MODEL)
         response_format = options.get(ATTR_AUDIO_OUTPUT) or options.get(
@@ -119,8 +116,6 @@ class VeniceAITTS(TextToSpeechEntity):
             voice, model, response_format, speed
         )
 
-        # Generate audio using Venice AI
-        _LOGGER.debug("Calling Venice AI speech API")
         audio_data = await self._client.speech.generate(
             text=message,
             voice=voice,
@@ -134,38 +129,6 @@ class VeniceAITTS(TextToSpeechEntity):
             len(audio_data) if audio_data else 0
         )
 
-        _LOGGER.debug(
-            "Generated audio data: type=%s, length=%d bytes",
-            type(audio_data), len(audio_data) if audio_data else 0
-        )
-
-        # Log audio data info for debugging
-        if audio_data:
-            null_count = audio_data.count(b'\x00')
-            _LOGGER.debug(
-                "Audio data: %d bytes, %d null bytes",
-                len(audio_data), null_count
-            )
-
-            # Check audio format
-            if len(audio_data) > 10:
-                start_bytes = audio_data[:10]
-                _LOGGER.debug("Audio starts with: %s", start_bytes.hex())
-                if (audio_data.startswith(b'RIFF') and
-                        b'WAVE' in audio_data[8:16]):
-                    _LOGGER.debug("WAV format detected")
-                elif audio_data.startswith(b'ID3'):
-                    _LOGGER.debug("MP3 with ID3 tag detected")
-                elif (audio_data.startswith(b'\xFF\xFB') or
-                      audio_data.startswith(b'\xFF\xF3') or
-                      audio_data.startswith(b'\xFF\xF2')):
-                    _LOGGER.debug("MP3 with MPEG frame detected")
-                else:
-                    _LOGGER.warning("Unknown audio format")
-
-        # Return the audio data as raw bytes with format
-        _LOGGER.debug("Returning TTS result: format=%s, type=%s",
-                      response_format, type(audio_data))
         return (response_format, audio_data)
 
     def async_get_supported_voices(self, language: str) -> list[Voice] | None:

@@ -171,22 +171,26 @@ class Models:
         # self._models_cache_time: float = 0
         # self._cache_ttl: float = 3600 # Cache models for 1 hour, example
 
-    async def list(self) -> list[dict]:
-        """List available models."""
+    async def list(self, model_type: str = "text") -> list[dict]:
+        """List available models.
+        
+        Args:
+            model_type: Type of models to fetch - "text", "audio", or "image"
+        """
         response_text = None # Initialize for error logging
         url = f"{self.client._base_url}/models"
-        _LOGGER.debug("Attempting to fetch models from URL: %s", url)
+        _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
         try:
             response = await self.client._http_client.get(
                 url,
                 headers=self.client._headers,
-                params={"type": "text"} # Spec shows type parameter
+                params={"type": model_type}
             )
             response_text = response.text
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
-            _LOGGER.debug("Successfully fetched %d models", len(models))
+            _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:
              # Handle errors similarly to chat completion calls
@@ -298,6 +302,69 @@ class Speech:
 
 
 # --- Main Async Client Class ---
+class Transcriptions:
+    """Transcriptions API for Venice AI."""
+
+    def __init__(self, client: "AsyncVeniceAIClient") -> None:
+        """Initialize transcriptions API."""
+        self.client = client
+
+    async def create(
+        self,
+        audio_data: bytes,
+        model: str = "nvidia/parakeet-tdt-0.6b-v3",
+        response_format: str = "json",
+        timestamps: bool = False,
+    ) -> dict[str, Any]:
+        """Create a transcription from audio data."""
+        # Prepare multipart form data
+        files = {
+            "file": ("audio.wav", audio_data, "audio/wav")
+        }
+        data = {
+            "model": model,
+            "response_format": response_format,
+            "timestamps": str(timestamps).lower(),  # Convert to string for form data
+        }
+
+        # Use separate headers for multipart requests
+        multipart_headers = {
+            "Authorization": f"Bearer {self.client._api_key}",
+        }
+
+        response_text = None
+        try:
+            response = await self.client._http_client.post(
+                f"{self.client._base_url}/audio/transcriptions",
+                headers=multipart_headers,
+                files=files,
+                data=data,
+                timeout=60.0  # Timeout for transcription
+            )
+            response_text = response.text
+            response.raise_for_status()
+            
+            # Parse JSON response
+            if response_format == "json":
+                return response.json()
+            else:
+                # For text format, return as dict with text field
+                return {"text": response_text}
+
+        except httpx.HTTPStatusError as err:
+            error_detail = response_text if response_text is not None else getattr(err.response, 'text', str(err))
+            _LOGGER.error("Venice AI Transcriptions API HTTP error %s: %s", err.response.status_code, error_detail)
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key for transcriptions") from err
+            raise VeniceAIError(f"HTTP error creating transcription {err.response.status_code}: {error_detail}") from err
+        except httpx.RequestError as err:
+            _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
+            raise VeniceAIError(f"Request error creating transcription: {err}") from err
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Failed to decode transcriptions JSON response: %s", response_text)
+            raise VeniceAIError("Failed to decode transcriptions API response") from err
+
+
 class AsyncVeniceAIClient:
     """Async client for the Venice AI API using httpx."""
 
@@ -328,6 +395,7 @@ class AsyncVeniceAIClient:
         self.models = Models(self)
         self.voices = Voices(self)
         self.speech = Speech(self)
+        self.transcriptions = Transcriptions(self)
         # Note: Image generation client part is missing based on original file
 
     async def close(self) -> None:

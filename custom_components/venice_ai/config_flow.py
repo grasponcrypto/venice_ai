@@ -24,17 +24,14 @@ from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
-    SelectSelectorMode, # Keep the import for SelectSelectorMode if used elsewhere
+    SelectSelectorMode,
     TemplateSelector,
 )
-# Import client exceptions and client itself
 from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
-# Import constants for default values and keys
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_PROMPT,
-    # CONF_REASONING_EFFORT, # Not used by Venice
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
@@ -43,37 +40,39 @@ from .const import (
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
+    CONF_STT_MODEL,
+    CONF_STT_RESPONSE_FORMAT,
+    CONF_STT_TIMESTAMPS,
     DOMAIN,
-    LOGGER,  # Use existing logger
+    LOGGER,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
-    # RECOMMENDED_REASONING_EFFORT, # Not used
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_VOICE,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_STT_MODEL,
+    RECOMMENDED_STT_RESPONSE_FORMAT,
+    RECOMMENDED_STT_TIMESTAMPS,
     VENICE_TTS_VOICES,
 )
-# Import the default prompt from the updated conversation module
+
 try:
-    # Ensure this matches the actual location and name
     from .conversation import DEFAULT_SYSTEM_PROMPT
 except ImportError:
-    # Fallback if conversation.py is not available during import time
     LOGGER.warning("Could not import DEFAULT_SYSTEM_PROMPT from conversation.py, using fallback.")
     DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
 
 
-# Schema for the initial setup step (API Key)
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
     }
 )
 
-# --- Config Flow Handler ---
+
 class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Venice AI Conversation."""
 
@@ -85,13 +84,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step (API Key entry)."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            # Validate the API key
             try:
-                # Use a temporary client instance for validation
                 LOGGER.debug("Validating Venice AI API key by fetching models")
                 client = AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY])
                 models_response = await client.models.list()
-                # Verify we got a valid response - it should be a list of models
                 if not models_response or not isinstance(models_response, list):
                     raise VeniceAIError("Invalid models response")
                 LOGGER.debug("API key validation successful, found %d models", len(models_response))
@@ -102,13 +98,11 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
             except VeniceAIError as err:
                 errors["base"] = "cannot_connect"
                 LOGGER.error("Cannot connect to Venice AI: %s", err)
-            except Exception:  # pylint: disable=broad-except
+            except Exception:
                 LOGGER.exception("Unexpected exception during Venice AI setup validation")
                 errors["base"] = "unknown"
             else:
-                # API key is valid, create the entry.
                 initial_options = {
-                    # Allow selecting multiple LLM APIs (tool providers)
                     CONF_LLM_HASS_API: [],
                     CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
                     CONF_PROMPT: DEFAULT_SYSTEM_PROMPT,
@@ -122,7 +116,6 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     title="Venice AI", data=user_input, options=initial_options
                 )
 
-        # Show the form again if user_input was None or errors occurred
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
@@ -133,51 +126,46 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         return VeniceAIOptionsFlow(config_entry)
 
 
-# --- Options Flow Handler ---
 class VeniceAIOptionsFlow(OptionsFlow):
     """Handle options flow for Venice AI integration."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
-        # Client instance should be fetched from runtime_data if possible
         self._client: AsyncVeniceAIClient | None = config_entry.runtime_data
-
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options for the Venice AI integration."""
 
-        # Handle form submission
         if user_input is not None:
-            # Normalize/sanitize selected tool API IDs to avoid stale values
             allowed_ids = {api.id for api in llm.async_get_apis(self.hass)}
             if CONF_LLM_HASS_API in user_input:
                 selected_ids = [
                     api_id for api_id in user_input[CONF_LLM_HASS_API] if api_id in allowed_ids
                 ]
             else:
-                # If not provided by UI, sanitize existing stored selection
                 selected_ids = [
                     api_id
                     for api_id in self.config_entry.options.get(CONF_LLM_HASS_API, [])
                     if api_id in allowed_ids
                 ]
 
-            # Merge new user_input with existing options, prioritizing new input
             updated_options = {**self.config_entry.options, **user_input}
-            # Always persist sanitized tool IDs to drop stale ones
             updated_options[CONF_LLM_HASS_API] = selected_ids
-            # Perform any validation on the combined options if necessary here
 
-            # Create/update the entry with the new options
             return self.async_create_entry(title="", data=updated_options)
-
 
         # --- Prepare form schema ---
         errors: dict[str, str] = {}
         models_options: list[SelectOptionDict] = [
-              SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
+            SelectOptionDict(value=RECOMMENDED_CHAT_MODEL, label="Default Model")
+        ]
+        tts_models_options: list[SelectOptionDict] = [
+            SelectOptionDict(value=RECOMMENDED_TTS_MODEL, label="TTS Kokoro Model")
+        ]
+        stt_models_options: list[SelectOptionDict] = [
+            SelectOptionDict(value=RECOMMENDED_STT_MODEL, label="NVIDIA Parakeet TDT 0.6B V3")
         ]
         voices_options = [
             SelectOptionDict(value=voice, label=voice)
@@ -187,10 +175,9 @@ class VeniceAIOptionsFlow(OptionsFlow):
         # Fetch models if client is available (best effort)
         if self._client:
             try:
-                LOGGER.debug("Fetching models for options flow")
-                models_response = await self._client.models.list()
+                LOGGER.debug("Fetching text models for options flow")
+                models_response = await self._client.models.list(model_type="text")
 
-                # Venice AI returns a direct list of models, not {"data": [...]}
                 if models_response and isinstance(models_response, list):
                     fetched_models = []
                     for model in models_response:
@@ -198,7 +185,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
                         if not model_id:
                             continue
 
-                        # Check if model supports function calling
                         model_spec = model.get("model_spec", {})
                         capabilities = model_spec.get("capabilities", {})
                         supports_function_calling = capabilities.get("supportsFunctionCalling", False)
@@ -210,16 +196,70 @@ class VeniceAIOptionsFlow(OptionsFlow):
                                 label=f"{model_name} ({model_id})"
                             ))
 
-                    # Sort models alphabetically by label
                     fetched_models.sort(key=lambda x: x["label"])
-                    # Replace the default model option if we have real models
                     if fetched_models:
                         models_options = fetched_models
-                        LOGGER.debug("Found %d models with function calling support", len(fetched_models))
+                        LOGGER.debug("Found %d text models with function calling support", len(fetched_models))
                     else:
-                        LOGGER.warning("No models with function calling support found")
+                        LOGGER.warning("No text models with function calling support found")
                 else:
-                    LOGGER.error("Invalid models response structure: expected list, got %s", type(models_response))
+                    LOGGER.error("Invalid text models response structure: expected list, got %s", type(models_response))
+
+                # Fetch audio models for TTS and STT
+                LOGGER.debug("Fetching audio models for TTS/STT options flow")
+                audio_models_response = await self._client.models.list(model_type="audio")
+
+                if audio_models_response and isinstance(audio_models_response, list):
+                    fetched_tts_models = []
+                    fetched_stt_models = []
+                    for model in audio_models_response:
+                        model_id = model.get("id")
+                        if not model_id:
+                            continue
+
+                        model_spec = model.get("model_spec", {})
+                        model_name = model_spec.get("name", model_id)
+                        capabilities = model_spec.get("capabilities", {})
+
+                        supports_tts = capabilities.get("supportsTTS", False) or "tts" in model_id.lower()
+                        supports_stt = capabilities.get("supportsTranscription", False) or "parakeet" in model_id.lower() or "whisper" in model_id.lower()
+
+                        label = f"{model_name} ({model_id})"
+
+                        if supports_tts:
+                            fetched_tts_models.append(SelectOptionDict(value=model_id, label=label))
+                        if supports_stt:
+                            fetched_stt_models.append(SelectOptionDict(value=model_id, label=label))
+
+                    if not fetched_tts_models and not fetched_stt_models:
+                        for model in audio_models_response:
+                            model_id = model.get("id")
+                            if not model_id:
+                                continue
+                            model_spec = model.get("model_spec", {})
+                            model_name = model_spec.get("name", model_id)
+                            label = f"{model_name} ({model_id})"
+
+                            if "tts" in model_id.lower() or "kokoro" in model_id.lower():
+                                fetched_tts_models.append(SelectOptionDict(value=model_id, label=label))
+                            elif "parakeet" in model_id.lower() or "whisper" in model_id.lower() or "stt" in model_id.lower():
+                                fetched_stt_models.append(SelectOptionDict(value=model_id, label=label))
+                            else:
+                                fetched_tts_models.append(SelectOptionDict(value=model_id, label=label))
+                                fetched_stt_models.append(SelectOptionDict(value=model_id, label=label))
+
+                    if fetched_tts_models:
+                        fetched_tts_models.sort(key=lambda x: x["label"])
+                        tts_models_options = fetched_tts_models
+                        LOGGER.debug("Found %d TTS models", len(fetched_tts_models))
+
+                    if fetched_stt_models:
+                        fetched_stt_models.sort(key=lambda x: x["label"])
+                        stt_models_options = fetched_stt_models
+                        LOGGER.debug("Found %d STT models", len(fetched_stt_models))
+
+                else:
+                    LOGGER.debug("No audio models returned or invalid response structure")
 
             except AuthenticationError:
                 LOGGER.error("Authentication error fetching models for options flow")
@@ -231,15 +271,12 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 LOGGER.exception("Unexpected error fetching models for options flow")
                 errors["base"] = "unknown"
         else:
-              LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
-              # Can still show form with default model
+            LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
 
-        # Get available Home Assistant LLM APIs
         hass_apis = [
             SelectOptionDict(value=api.id, label=api.name)
             for api in llm.async_get_apis(self.hass)
         ]
-        # Only suggest values that are still valid options
         llm_api_allowed_ids = {opt["value"] for opt in hass_apis}
         stored_llm_api_ids = self.config_entry.options.get(CONF_LLM_HASS_API, []) or []
         if not isinstance(stored_llm_api_ids, list):
@@ -248,11 +285,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
             api_id for api_id in stored_llm_api_ids if api_id in llm_api_allowed_ids
         ]
 
-
-        # Define the schema for the options form
-        # Use current option value as default for the form field
         options_schema_dict = {
-            # --- Model Selection ---
             vol.Optional(
                 CONF_CHAT_MODEL,
                 default=self.config_entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
@@ -260,16 +293,12 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 SelectSelectorConfig(
                     options=models_options,
                     mode=SelectSelectorMode.DROPDOWN,
-                    # translation_key can be added for frontend i18n
                 )
             ),
-            # --- Prompt ---
             vol.Optional(
                 CONF_PROMPT,
-                # Use description for suggested_value if needed, or just default
                 default=self.config_entry.options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
             ): TemplateSelector(),
-            # --- LLM HASS API Selection (tools) ---
             vol.Optional(
                 CONF_LLM_HASS_API,
                 description={"suggested_value": filtered_llm_api_suggested},
@@ -279,31 +308,24 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     multiple=True,
                 )
             ),
-            # --- Temperature ---
             vol.Optional(
                 CONF_TEMPERATURE,
                 default=self.config_entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
             ): NumberSelector(
-                # Use string literal "slider" for mode
                 NumberSelectorConfig(min=0, max=2, step=0.05, mode="slider")
             ),
-            # --- Top P ---
             vol.Optional(
                 CONF_TOP_P,
                 default=self.config_entry.options.get(CONF_TOP_P, RECOMMENDED_TOP_P)
             ): NumberSelector(
-                # Use string literal "slider" for mode
                 NumberSelectorConfig(min=0, max=1, step=0.05, mode="slider")
             ),
-            # --- Max Tokens ---
             vol.Optional(
                 CONF_MAX_TOKENS,
                 default=self.config_entry.options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
             ): NumberSelector(
-                # Use string literal "box" for mode
-                NumberSelectorConfig(min=1, step=1, mode="box") # Allow integer input
+                NumberSelectorConfig(min=1, step=1, mode="box")
             ),
-            # --- Reasoning Model Options ---
             vol.Optional(
                 CONF_STRIP_THINKING_RESPONSE,
                 default=self.config_entry.options.get(CONF_STRIP_THINKING_RESPONSE, False)
@@ -312,17 +334,15 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 CONF_DISABLE_THINKING,
                 default=self.config_entry.options.get(CONF_DISABLE_THINKING, False)
             ): BooleanSelector(),
-            # --- TTS Model Selection ---
             vol.Optional(
                 CONF_TTS_MODEL,
                 default=self.config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
             ): SelectSelector(
                 SelectSelectorConfig(
-                    options=[SelectOptionDict(value=RECOMMENDED_TTS_MODEL, label="TTS Kokoro Model")],
+                    options=tts_models_options,
                     mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
-            # --- TTS Voice Selection ---
             vol.Optional(
                 CONF_TTS_VOICE,
                 default=self.config_entry.options.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
@@ -332,7 +352,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
-            # --- TTS Response Format ---
             vol.Optional(
                 CONF_TTS_RESPONSE_FORMAT,
                 default=self.config_entry.options.get(CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT)
@@ -347,22 +366,43 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     mode=SelectSelectorMode.DROPDOWN,
                 )
             ),
-            # --- TTS Speed ---
             vol.Optional(
                 CONF_TTS_SPEED,
                 default=self.config_entry.options.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
             ): NumberSelector(
                 NumberSelectorConfig(min=0.1, max=3.0, step=0.1, mode="slider")
             ),
+            vol.Optional(
+                CONF_STT_MODEL,
+                default=self.config_entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=stt_models_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_STT_RESPONSE_FORMAT,
+                default=self.config_entry.options.get(CONF_STT_RESPONSE_FORMAT, RECOMMENDED_STT_RESPONSE_FORMAT)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="json", label="JSON"),
+                        SelectOptionDict(value="text", label="Text"),
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_STT_TIMESTAMPS,
+                default=self.config_entry.options.get(CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS)
+            ): BooleanSelector(),
         }
 
         options_schema = vol.Schema(options_schema_dict)
 
-        # Show the form with the defined schema and potential errors
-        # Pass models_info to description_placeholders if needed in frontend strings.json
         return self.async_show_form(
             step_id="init",
             data_schema=options_schema,
             errors=errors,
-            # description_placeholders={"models_info": "List models here if needed"}
         )
