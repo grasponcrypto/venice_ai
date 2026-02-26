@@ -4,21 +4,27 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncGenerator
 
-from homeassistant.components.tts import TextToSpeechEntity, TtsAudioType
+from homeassistant.components.tts import (
+    ATTR_AUDIO_OUTPUT,
+    ATTR_VOICE,
+    TTSAudioRequest,
+    TTSAudioResponse,
+    TextToSpeechEntity,
+    TtsAudioType,
+    Voice,
+)
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient
 from .const import (
-    CONF_TTS_MODEL,
-    CONF_TTS_RESPONSE_FORMAT,
-    CONF_TTS_SPEED,
-    CONF_TTS_VOICE,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
+    VENICE_TTS_VOICES,
 )
 
 
@@ -44,13 +50,18 @@ class VeniceAITTS(TextToSpeechEntity):
         """Initialize TTS entity."""
         self._client = client
         self._config_entry = config_entry
+        self._name = "Venice AI TTS"
         self._attr_unique_id = f"{config_entry.entry_id}_tts"
-        self._attr_name = "Venice AI TTS"
         self._attr_device_info = {
             "identifiers": {(config_entry.domain, config_entry.entry_id)},
             "name": "Venice AI",
             "manufacturer": "Venice AI",
         }
+
+    @property
+    def name(self) -> str:
+        """Friendly name for entity listing."""
+        return self._name
 
     @property
     def supported_languages(self) -> list[str]:
@@ -65,107 +76,46 @@ class VeniceAITTS(TextToSpeechEntity):
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return [CONF_TTS_VOICE, CONF_TTS_MODEL, CONF_TTS_RESPONSE_FORMAT, CONF_TTS_SPEED]
+        return [
+            ATTR_VOICE,
+            ATTR_AUDIO_OUTPUT,
+            "tts_voice",
+            "tts_model",
+            "tts_response_format",
+            "tts_speed",
+        ]
 
     @property
     def default_options(self) -> dict[str, Any]:
         """Return default options."""
         return {
-            CONF_TTS_VOICE: RECOMMENDED_TTS_VOICE,
-            CONF_TTS_MODEL: RECOMMENDED_TTS_MODEL,
-            CONF_TTS_RESPONSE_FORMAT: RECOMMENDED_TTS_RESPONSE_FORMAT,
-            CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED,
+            ATTR_AUDIO_OUTPUT: RECOMMENDED_TTS_RESPONSE_FORMAT,
+            "tts_voice": RECOMMENDED_TTS_VOICE,
+            "tts_model": RECOMMENDED_TTS_MODEL,
+            "tts_response_format": RECOMMENDED_TTS_RESPONSE_FORMAT,
+            "tts_speed": RECOMMENDED_TTS_SPEED,
         }
 
-    def _resolve(
-        self,
-        option_name: str,
-        runtime_options: dict[str, Any],
-        config_options: dict[str, Any],
-        default_value: Any,
-    ) -> Any:
-        """Resolve option value with three-tier fallback hierarchy (runtime → config → defaults)."""
-        # Check runtime options first
-        if option_name in runtime_options and runtime_options[option_name] is not None:
-            return runtime_options[option_name]
-        
-        # Check config options second
-        if option_name in config_options and config_options[option_name] is not None:
-            return config_options[option_name]
-        
-        # Return default value
-        return default_value
-
     async def async_get_tts_audio(
-        self, message: str, language: str, options: dict[str, Any]
+        self, message: str, language: str, options: dict[str, Any] | None = None
     ) -> TtsAudioType:
         """Generate TTS audio."""
-        # Add null safety
-        options = options or {}
-        config_options = self._config_entry.options or {}
+        if options is None:
+            options = {}
 
-        # Resolve all options with three-tier fallback hierarchy
-        voice = self._resolve(
-            CONF_TTS_VOICE,
-            options,
-            config_options,
-            RECOMMENDED_TTS_VOICE
+        voice = options.get(ATTR_VOICE) or options.get("tts_voice", RECOMMENDED_TTS_VOICE)
+        model = options.get("tts_model", RECOMMENDED_TTS_MODEL)
+        response_format = options.get(ATTR_AUDIO_OUTPUT) or options.get(
+            "tts_response_format", RECOMMENDED_TTS_RESPONSE_FORMAT
         )
-        model = self._resolve(
-            CONF_TTS_MODEL,
-            options,
-            config_options,
-            RECOMMENDED_TTS_MODEL
-        )
-        response_format = self._resolve(
-            CONF_TTS_RESPONSE_FORMAT,
-            options,
-            config_options,
-            RECOMMENDED_TTS_RESPONSE_FORMAT
-        )
-        speed = self._resolve(
-            CONF_TTS_SPEED,
-            options,
-            config_options,
-            RECOMMENDED_TTS_SPEED
-        )
+        speed = options.get("tts_speed", RECOMMENDED_TTS_SPEED)
 
         _LOGGER.debug("Generating TTS for message: %s", message)
         _LOGGER.debug(
-            "TTS option resolution: voice=%s (runtime=%s, config=%s, default=%s)",
-            voice,
-            options.get(CONF_TTS_VOICE),
-            config_options.get(CONF_TTS_VOICE),
-            RECOMMENDED_TTS_VOICE
-        )
-        _LOGGER.debug(
-            "TTS option resolution: model=%s (runtime=%s, config=%s, default=%s)",
-            model,
-            options.get(CONF_TTS_MODEL),
-            config_options.get(CONF_TTS_MODEL),
-            RECOMMENDED_TTS_MODEL
-        )
-        _LOGGER.debug(
-            "TTS option resolution: format=%s (runtime=%s, config=%s, default=%s)",
-            response_format,
-            options.get(CONF_TTS_RESPONSE_FORMAT),
-            config_options.get(CONF_TTS_RESPONSE_FORMAT),
-            RECOMMENDED_TTS_RESPONSE_FORMAT
-        )
-        _LOGGER.debug(
-            "TTS option resolution: speed=%s (runtime=%s, config=%s, default=%s)",
-            speed,
-            options.get(CONF_TTS_SPEED),
-            config_options.get(CONF_TTS_SPEED),
-            RECOMMENDED_TTS_SPEED
-        )
-        _LOGGER.debug(
-            "Final TTS options: voice=%s, model=%s, format=%s, speed=%s",
+            "TTS options: voice=%s, model=%s, format=%s, speed=%s",
             voice, model, response_format, speed
         )
 
-        # Generate audio using Venice AI
-        _LOGGER.debug("Calling Venice AI speech API")
         audio_data = await self._client.speech.generate(
             text=message,
             voice=voice,
@@ -179,57 +129,26 @@ class VeniceAITTS(TextToSpeechEntity):
             len(audio_data) if audio_data else 0
         )
 
-        _LOGGER.debug(
-            "Generated audio data: type=%s, length=%d bytes",
-            type(audio_data), len(audio_data) if audio_data else 0
-        )
-
-        # Log audio data info for debugging
-        if audio_data:
-            null_count = audio_data.count(b'\x00')
-            _LOGGER.debug(
-                "Audio data: %d bytes, %d null bytes",
-                len(audio_data), null_count
-            )
-
-            # Check audio format
-            if len(audio_data) > 10:
-                start_bytes = audio_data[:10]
-                _LOGGER.debug("Audio starts with: %s", start_bytes.hex())
-                if (audio_data.startswith(b'RIFF') and
-                        b'WAVE' in audio_data[8:16]):
-                    _LOGGER.debug("WAV format detected")
-                elif audio_data.startswith(b'ID3'):
-                    _LOGGER.debug("MP3 with ID3 tag detected")
-                elif (audio_data.startswith(b'\xFF\xFB') or
-                      audio_data.startswith(b'\xFF\xF3') or
-                      audio_data.startswith(b'\xFF\xF2')):
-                    _LOGGER.debug("MP3 with MPEG frame detected")
-                else:
-                    _LOGGER.warning("Unknown audio format")
-
-        # Return the audio data as raw bytes with format
-        _LOGGER.debug("Returning TTS result: format=%s, type=%s",
-                      response_format, type(audio_data))
         return (response_format, audio_data)
 
-    async def async_get_tts_audio_stream(
-        self, message: str, language: str, options: dict[str, Any]
-    ) -> AsyncGenerator[tuple[bytes, str], None]:
-        """Generate streaming TTS audio."""
-        _LOGGER.debug("Streaming TTS requested for message: %s", message)
+    def async_get_supported_voices(self, language: str) -> list[Voice] | None:
+        """Return available Venice voices for Home Assistant voice selection."""
+        return [Voice(voice_id, voice_id) for voice_id in VENICE_TTS_VOICES]
 
-        # Generate full audio and yield as single chunk
-        # Real streaming would yield chunks as available
-        response_format, audio_data = await self.async_get_tts_audio(
-            message, language, options
+    async def async_stream_tts_audio(
+        self, request: TTSAudioRequest
+    ) -> TTSAudioResponse:
+        """Stream audio using a single generated chunk."""
+        message = "".join([chunk async for chunk in request.message_gen])
+        options = dict(request.options or {})
+
+        audio_format, audio_data = await self.async_get_tts_audio(
+            message, request.language, options
         )
+        if not audio_data or not audio_format:
+            raise HomeAssistantError(f"No TTS from {self.entity_id} for '{message}'")
 
-        # Determine content type from format
-        if response_format == "wav":
-            content_type = "audio/wav"
-        else:
-            content_type = "audio/mpeg"
+        async def gen() -> AsyncGenerator[bytes, None]:
+            yield audio_data
 
-        # Yield the audio result as tuple
-        yield (audio_data, content_type)
+        return TTSAudioResponse(audio_format, gen())
