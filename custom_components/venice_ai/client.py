@@ -1,6 +1,7 @@
 """Venice AI API Client."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -110,8 +111,9 @@ class ChatCompletions:
         response_text = None
 
         try:
-            response = await self.client._http_client.post(
-                f"{self.client._base_url}/chat/completions",
+            response = await self.client._async_request_with_retry(
+                "POST",
+                "/chat/completions",
                 headers=self.client._headers,
                 json=payload,
                 timeout=120.0,
@@ -171,8 +173,9 @@ class Models:
         url = f"{self.client._base_url}/models"
         _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
         try:
-            response = await self.client._http_client.get(
-                url,
+            response = await self.client._async_request_with_retry(
+                "GET",
+                "/models",
                 headers=self.client._headers,
                 params={"type": model_type},
             )
@@ -208,8 +211,9 @@ class Voices:
         """List available voices."""
         response_text = None
         try:
-            response = await self.client._http_client.get(
-                f"{self.client._base_url}/audio/voices",
+            response = await self.client._async_request_with_retry(
+                "GET",
+                "/audio/voices",
                 headers=self.client._headers,
             )
             response_text = response.text
@@ -262,8 +266,9 @@ class Speech:
         }
 
         try:
-            response = await self.client._http_client.post(
-                f"{self.client._base_url}/audio/speech",
+            response = await self.client._async_request_with_retry(
+                "POST",
+                "/audio/speech",
                 headers=audio_headers,
                 json=data,
                 timeout=60.0,
@@ -322,8 +327,9 @@ class Transcriptions:
 
         response_text = None
         try:
-            response = await self.client._http_client.post(
-                f"{self.client._base_url}/audio/transcriptions",
+            response = await self.client._async_request_with_retry(
+                "POST",
+                "/audio/transcriptions",
                 headers=multipart_headers,
                 files=files,
                 data=data,
@@ -380,8 +386,9 @@ class Images:
 
         response_text = None
         try:
-            response = await self.client._http_client.post(
-                f"{self.client._base_url}/images/generations",
+            response = await self.client._async_request_with_retry(
+                "POST",
+                "/images/generations",
                 headers=self.client._headers,
                 json=payload,
                 timeout=120.0,
@@ -430,6 +437,50 @@ class AsyncVeniceAIClient:
         self.speech = Speech(self)
         self.transcriptions = Transcriptions(self)
         self.images = Images(self)
+
+    async def _async_request_with_retry(
+        self,
+        method: str,
+        endpoint: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Make an HTTP request with exponential backoff retry for transient failures."""
+        max_retries = 3
+        retryable_statuses = {429, 500, 502, 503}
+        base_delay = 1.0
+        last_err = None
+
+        url = f"{self._base_url}{endpoint}"
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._http_client.request(method, url, **kwargs)
+
+                if response.status_code in retryable_statuses:
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2 ** attempt), 30.0)
+                        _LOGGER.warning(
+                            "Venice AI API returned HTTP %d, retrying in %.1fs (attempt %d/%d)",
+                            response.status_code, delay, attempt + 1, max_retries,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                return response
+
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as err:
+                last_err = err
+                if attempt < max_retries:
+                    delay = min(base_delay * (2 ** attempt), 30.0)
+                    _LOGGER.warning(
+                        "Venice AI API request error (%s), retrying in %.1fs (attempt %d/%d)",
+                        type(err).__name__, delay, attempt + 1, max_retries,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise last_err from err
+
+        raise VeniceAIError("Max retries exceeded")
 
     async def close(self) -> None:
         """Close the httpx client if it was created internally."""

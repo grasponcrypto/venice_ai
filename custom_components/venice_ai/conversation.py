@@ -281,9 +281,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                     chat_log, system_prompt, strip_thinking=strip_thinking
                 )
 
-                if not messages or messages[-1].get("role") != "user":
-                    _LOGGER.error("User message missing from prepared messages list: %s", messages)
-                    raise HomeAssistantError("User message missing before sending to API.")
+                if not messages:
+                    _LOGGER.error("Message list is empty before sending to API.")
+                    raise HomeAssistantError("Message list is empty before sending to API.")
 
                 response = await self._client.chat.completions.create(
                     model=model,
