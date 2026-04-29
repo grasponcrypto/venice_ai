@@ -14,17 +14,20 @@ from homeassistant.components.stt import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_STT_MODEL,
     CONF_STT_RESPONSE_FORMAT,
     CONF_STT_TIMESTAMPS,
-    LOGGER,
+    DOMAIN,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
@@ -93,6 +96,13 @@ class VeniceAISTT(SpeechToTextEntity):
         self._timestamps = timestamps
         self._attr_unique_id = f"{entry.entry_id}_stt"
         self._attr_name = entry.title
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Venice AI",
+            model="Venice AI STT",
+            entry_type=dr.DeviceEntryType.SERVICE,
+        )
 
     @property
     def supported_languages(self) -> list[str]:
@@ -139,7 +149,7 @@ class VeniceAISTT(SpeechToTextEntity):
             async for chunk in stream:
                 audio_data += chunk
 
-            LOGGER.debug(
+            _LOGGER.debug(
                 "Processing audio stream (%d bytes) with model=%s, format=%s, timestamps=%s",
                 len(audio_data),
                 self._model,
@@ -149,7 +159,7 @@ class VeniceAISTT(SpeechToTextEntity):
 
             # Convert PCM data to WAV format since Venice AI expects proper WAV files
             wav_data = _pcm_to_wav(audio_data, sample_rate=16000, num_channels=1, bits_per_sample=16)
-            LOGGER.debug("Converted PCM to WAV (%d bytes -> %d bytes)", len(audio_data), len(wav_data))
+            _LOGGER.debug("Converted PCM to WAV (%d bytes -> %d bytes)", len(audio_data), len(wav_data))
 
             client: AsyncVeniceAIClient = self.entry.runtime_data
 
@@ -161,13 +171,13 @@ class VeniceAISTT(SpeechToTextEntity):
             )
 
             text = result.get("text", "")
-            LOGGER.debug("Transcription result: %s", text)
+            _LOGGER.debug("Transcription result: %s", text)
 
             return stt.SpeechResult(text, stt.SpeechResultState.SUCCESS)
 
         except VeniceAIError as err:
-            LOGGER.error("Venice AI transcription error: %s", err)
+            _LOGGER.error("Venice AI transcription error: %s", err)
             return stt.SpeechResult("", stt.SpeechResultState.ERROR)
         except Exception as err:
-            LOGGER.exception("Unexpected error during transcription: %s", err)
+            _LOGGER.exception("Unexpected error during transcription: %s", err)
             return stt.SpeechResult("", stt.SpeechResultState.ERROR)

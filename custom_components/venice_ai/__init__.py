@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
@@ -23,7 +25,9 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import ai_task, conversation
 
 from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_AI_TASK = "ai_task"
@@ -171,16 +175,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     try:
         await client.models.list()
     except AuthenticationError as err:
-        LOGGER.error("Invalid API key: %s", err)
+        _LOGGER.error("Invalid API key: %s", err)
         return False
     except VeniceAIError as err:
         raise ConfigEntryNotReady(err) from err
 
     entry.runtime_data = client
 
-    LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
+    _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    LOGGER.info("Successfully forwarded entry setups")
+    _LOGGER.info("Successfully forwarded entry setups")
     return True
 
 

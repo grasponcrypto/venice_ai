@@ -142,17 +142,13 @@ The options flow still calls `self._client.models.list()` twice (once for text m
 
 ---
 
-### 12. Inconsistent Device Info Between Platforms — PARTIALLY FIXED
+### 12. Inconsistent Device Info Between Platforms — FIXED
 
 **Files:** `tts.py`, `conversation.py`, `ai_task.py`, `stt.py`
 
-`conversation.py` and `ai_task.py` now use `dr.DeviceInfo` consistently. However:
-- `tts.py` still uses a raw dict for `_attr_device_info`
-- `stt.py` does not set `_attr_device_info` at all
+All platforms now use `dr.DeviceInfo` consistently with the same identifiers tuple `(DOMAIN, entry.entry_id)` and consistent fields.
 
-**Fix:** Standardize all platforms to use `dr.DeviceInfo` with the same identifiers tuple `(DOMAIN, entry.entry_id)` and consistent fields.
-
-**Status:** ⚠️ PARTIALLY FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -387,8 +383,8 @@ The repository contains no test files.
 | `config_flow.py` | ✅ Fixed | Resource leak fixed with async context manager |
 | `const.py` | ✅ Fixed | Unused constants removed |
 | `conversation.py` | 🟠 Needs Work | Fragile history reconstruction, logger inconsistency, overrides internal method |
-| `tts.py` | 🟡 Needs Update | Inconsistent device info (raw dict), restrictive languages, redundant options |
-| `stt.py` | 🟡 Needs Update | Not truly streaming, restrictive languages, no device_info, uses `LOGGER` from const |
+| `tts.py` | 🟡 Needs Update | Restrictive languages, redundant options |
+| `stt.py` | 🟡 Needs Update | Not truly streaming, restrictive languages, uses `LOGGER` from const |
 | `ai_task.py` | ✅ Fixed | Model now read from options, uses `dr.DeviceInfo` |
 | `todo.py` | ✅ Deleted | Dead code removed |
 | `task_types.py` | ✅ Deleted | Dead code removed |

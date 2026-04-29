@@ -1,9 +1,6 @@
 """Constants for the Venice AI Conversation integration."""
 
-import logging
-
 DOMAIN = "venice_ai"
-LOGGER = logging.getLogger(__package__)
 
 CONF_RECOMMENDED = "recommended"
 CONF_PROMPT = "prompt"

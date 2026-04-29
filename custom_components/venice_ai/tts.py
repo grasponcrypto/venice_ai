@@ -16,10 +16,12 @@ from homeassistant.components.tts import (
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient
 from .const import (
+    DOMAIN,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
@@ -52,11 +54,13 @@ class VeniceAITTS(TextToSpeechEntity):
         self._config_entry = config_entry
         self._name = "Venice AI TTS"
         self._attr_unique_id = f"{config_entry.entry_id}_tts"
-        self._attr_device_info = {
-            "identifiers": {(config_entry.domain, config_entry.entry_id)},
-            "name": "Venice AI",
-            "manufacturer": "Venice AI",
-        }
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, config_entry.entry_id)},
+            name=config_entry.title,
+            manufacturer="Venice AI",
+            model="Venice AI TTS",
+            entry_type=dr.DeviceEntryType.SERVICE,
+        )
 
     @property
     def name(self) -> str:
