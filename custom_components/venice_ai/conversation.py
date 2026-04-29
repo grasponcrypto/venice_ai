@@ -48,10 +48,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, TemplateError
-from homeassistant.helpers import intent, llm, device_registry as dr
+from homeassistant.helpers import intent, llm, device_registry as dr, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
+
 
 # Default system prompt for Venice AI
 DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant controlling a smart home. You can control lights, switches, climate, media players, and other devices. Always be concise and helpful."""
@@ -66,7 +67,7 @@ def _make_schema_hashable(obj: Any) -> Any:
         return frozenset((k, _make_schema_hashable(v)) for k, v in obj.items())
     if isinstance(obj, list):
         return tuple(_make_schema_hashable(v) for v in obj)
-    if hasattr(obj, "__class__") and "Selector" in obj.__class__.__name__:
+    if isinstance(obj, selector.Selector):
         _LOGGER.debug(
             "_make_schema_hashable: replacing selector %s with str",
             obj.__class__.__name__,

@@ -284,27 +284,35 @@ Expanded with recommended metadata (`content_in_root`, `zip_release`).
 
 ---
 
-### 24. Conversation Tool Loop — Fragile History Reconstruction — NOT FIXED
+### 24. Conversation Tool Loop — Full ChatLog Re-conversion — FIXED
 
 **File:** `conversation.py`
 
-The tool loop still reconstructs message history by searching backwards for a `UserContent` message instead of simply re-converting the entire `chat_log.content` each iteration.
+The tool loop now re-converts the entire `chat_log.content` each iteration via `_convert_chat_log_to_venice_messages(chat_log, system_prompt, strip_thinking=strip_thinking)`. This is correct and simple, building a fresh messages list from the full conversation history every time.
 
-**Fix:** Re-convert the entire `chat_log.content` each loop iteration for correctness and simplicity.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
-### 25. `_make_schema_hashable` Uses Fragile Class Name Detection — NOT FIXED
+### 25. `_make_schema_hashable` Uses Fragile Class Name Detection — FIXED
 
 **File:** `conversation.py`
 
-Still checks `if "Selector" in obj.__class__.__name__:` instead of using `isinstance` against specific HA selector types.
+Changed from fragile string-based class name detection:
+```python
+if hasattr(obj, "__class__") and "Selector" in obj.__class__.__name__:
+```
 
-**Fix:** Use `isinstance` checks against `selector.Selector` base class or specific selector types.
+to a robust `isinstance` check against the HA selector base class:
+```python
+if isinstance(obj, selector.Selector):
+```
 
-**Status:** ❌ NOT FIXED
+The `selector` module is now imported from `homeassistant.helpers`.
+
+**Status:** ✅ FIXED
+>>>>+++ REPLACE
+
 
 ---
 
