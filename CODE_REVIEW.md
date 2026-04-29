@@ -112,13 +112,13 @@ model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
 
 ---
 
-### 9. Logger Naming Inconsistency — PARTIALLY FIXED
+### 9. Logger Naming Inconsistency — FIXED
 
 **Files:** multiple
 
-`client.py`, `ai_task.py`, and `tts.py` now use `_LOGGER = logging.getLogger(__name__)`. However, `const.py`, `conversation.py`, `config_flow.py`, and `stt.py` still use `__package__` or import `LOGGER` from `const.py`.
+All modules now consistently use `_LOGGER = logging.getLogger(__name__)`.
 
-**Status:** ⚠️ PARTIALLY FIXED — standardize remaining modules
+**Status:** ✅ FIXED
 
 ---
 
@@ -166,31 +166,27 @@ All platforms now use `dr.DeviceInfo` consistently with the same identifiers tup
 
 ---
 
-### 13. Missing `Platform.STT` and `Platform.TTS` in `manifest.json` Dependencies — NOT FIXED
+### 13. Missing `Platform.STT` and `Platform.TTS` in `manifest.json` Dependencies — FIXED
 
 **File:** `manifest.json`
 
-The `dependencies` list still only contains `["conversation"]`. `ai_task` should be added since the integration registers that platform and depends on it.
-
-**Fix:** Add `"ai_task"` to dependencies:
+`ai_task` has been added to `dependencies` alongside `conversation`:
 
 ```json
 "dependencies": ["conversation", "ai_task"],
 ```
 
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
-### 14. No Retry Logic or Rate Limiting in Client — NOT FIXED
+### 14. No Retry Logic or Rate Limiting in Client — FIXED
 
 **File:** `client.py`
 
-The HTTP client has no retry logic for transient failures (429, 500, 502, 503, network timeouts).
+Added `_async_request_with_retry()` to `AsyncVeniceAIClient` with exponential backoff for retryable HTTP status codes (429, 500, 502, 503) and transient network errors (timeout, network error, protocol error). 3 retries with base delay of 1s and max delay of 30s.
 
-**Fix:** Consider using `tenacity` or simple exponential backoff for retryable status codes.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -229,27 +225,23 @@ The STT entity declares it supports only `WAV` format, `PCM` codec, 16-bit, 16kH
 
 ---
 
-### 18. TTS `supported_languages` Is Overly Restrictive — NOT FIXED
+### 18. TTS `supported_languages` Is Overly Restrictive — FIXED
 
 **Files:** `tts.py`, `stt.py`
 
-Both return `["en"]` only. Venice AI models often support multiple languages.
+Both now return `["en", "zh", "fr", "hi", "it", "ja", "pl", "es"]` reflecting Venice AI's kokoro TTS and parakeet STT multilingual capabilities.
 
-**Fix:** Add common languages or return `MATCH_ALL` equivalent if the models truly support multiple languages.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
-### 19. TTS `supported_options` Uses Non-Standard Option Names — NOT FIXED
+### 19. TTS `supported_options` Uses Non-Standard Option Names — FIXED
 
 **File:** `tts.py`
 
-The options `tts_voice`, `tts_model`, `tts_response_format`, and `tts_speed` are custom option names, not standard HA TTS options. There's also redundancy between `ATTR_VOICE` and `"tts_voice"`.
+Consolidated options to use standard HA TTS constants (`ATTR_VOICE`, `ATTR_AUDIO_OUTPUT`) alongside `tts_model` and `tts_speed`. Removed redundant `"tts_voice"` and `"tts_response_format"` duplicates. `default_options` now reads from config entry options.
 
-**Fix:** Consider consolidating `ATTR_VOICE` and `tts_voice` into a single option, or document the distinction clearly.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -372,12 +364,12 @@ The repository contains no test files.
 | File | Status | Key Issues |
 |---|---|---|
 | `__init__.py` | ✅ Fixed | `ai_task` service no longer uses `hass.data` internals |
-| `client.py` | 🟡 Improved | TTL model caching implemented, no retry logic |
+| `client.py` | ✅ Fixed | TTL model caching and retry logic implemented |
 | `config_flow.py` | ✅ Fixed | Resource leak fixed with async context manager |
 | `const.py` | ✅ Fixed | Unused constants removed |
-| `conversation.py` | 🟠 Needs Work | Fragile history reconstruction, logger inconsistency, overrides internal method |
-| `tts.py` | 🟡 Needs Update | Restrictive languages, redundant options |
-| `stt.py` | 🟡 Needs Update | Not truly streaming, restrictive languages, uses `LOGGER` from const |
+| `conversation.py` | 🟠 Needs Work | Fragile history reconstruction, overrides internal method |
+| `tts.py` | ✅ Fixed | Languages expanded, options consolidated |
+| `stt.py` | 🟡 Needs Update | Not truly streaming, no audio format validation |
 | `ai_task.py` | ✅ Fixed | Model now read from options, uses `dr.DeviceInfo` |
 | `todo.py` | ✅ Deleted | Dead code removed |
 | `task_types.py` | ✅ Deleted | Dead code removed |
@@ -391,14 +383,14 @@ The repository contains no test files.
 
 ## 🏗️ Recommended Priority Fix Order
 
-1. **Add `ai_task` to `manifest.json` dependencies** — integration depends on this platform
-2. **Fix `ai_task` service fallback** — remove `hass.data` internals access completely
-3. **Standardize device info** — all platforms should use `dr.DeviceInfo` consistently
-4. **Standardize loggers** — use `_LOGGER = logging.getLogger(__name__)` in remaining modules
-5. **Add model caching** — reduce API calls in options flow
-6. **Add TTS/STT strings to `strings.json`** — improve user experience
-7. **Add `ai_task` icon to `icons.json`** — minor UX improvement
-8. **Expand `hacs.json`** — add recommended metadata
-9. **Fix conversation tool loop** — use full chat_log re-conversion
-10. **Add retry logic** — handle transient API failures
+1. **Add `ai_task` to `manifest.json` dependencies** — ✅ DONE
+2. **Fix `ai_task` service fallback** — ✅ DONE
+3. **Standardize device info** — ✅ DONE
+4. **Standardize loggers** — ✅ DONE
+5. **Add model caching** — ✅ DONE
+6. **Add TTS/STT strings to `strings.json`** — ✅ DONE
+7. **Add `ai_task` icon to `icons.json`** — ✅ DONE
+8. **Expand `hacs.json`** — ✅ DONE
+9. **Fix conversation tool loop** — use full chat_log re-conversion (next priority)
+10. **Add retry logic** — ✅ DONE
 11. **Add tests** — ensure correctness and prevent regressions
