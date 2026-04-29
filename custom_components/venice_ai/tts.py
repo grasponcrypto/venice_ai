@@ -125,7 +125,7 @@ class VeniceAITTS(TextToSpeechEntity):
             text=message,
             voice=voice,
             model=model,
-            response_format=response_format,
+            audio_output=response_format,
             speed=speed,
             streaming=False
         )

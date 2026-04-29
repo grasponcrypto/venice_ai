@@ -247,7 +247,7 @@ class Speech:
         text: str,
         voice: str = "bm_daniel",
         model: str = "tts-kokoro",
-        response_format: str = "mp3",
+        audio_output: str = "mp3",
         speed: float = 1.0,
         streaming: bool = False,
     ) -> bytes:
@@ -256,7 +256,7 @@ class Speech:
             "input": text,
             "model": model,
             "voice": voice,
-            "response_format": response_format,
+            "response_format": audio_output,
             "speed": speed,
             "streaming": streaming,
         }
