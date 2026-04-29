@@ -267,24 +267,13 @@ The options step `"init"` now includes labels for:
 
 ---
 
-### 21. `icons.json` Is Incomplete — NOT FIXED
+### 21. `icons.json` Is Incomplete — FIXED
 
 **File:** `icons.json`
 
-Only the `generate_image` service has an icon. The `ai_task` service has no icon entry.
+Added the `ai_task` service icon alongside the existing `generate_image` icon.
 
-**Fix:** Add an icon for the `ai_task` service:
-
-```json
-{
-    "services": {
-        "generate_image": { "service": "mdi:image-sync" },
-        "ai_task": { "service": "mdi:brain" }
-    }
-}
-```
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -300,23 +289,13 @@ Only the `generate_image` service has an icon. The `ai_task` service has no icon
 
 ---
 
-### 23. `hacs.json` Is Minimal — NOT FIXED
+### 23. `hacs.json` Is Minimal — FIXED
 
 **File:** `hacs.json`
 
-Only contains `{ "name": "Venice AI" }`.
+Expanded with recommended metadata (`content_in_root`, `zip_release`).
 
-**Fix:** Expand with recommended metadata:
-
-```json
-{
-    "name": "Venice AI",
-    "content_in_root": false,
-    "zip_release": true
-}
-```
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -405,8 +384,8 @@ The repository contains no test files.
 | `manifest.json` | ✅ Fixed | `ai_task` dependency added |
 | `services.yaml` | 🟡 Acceptable | Missing icon reference for `ai_task` |
 | `strings.json` | ✅ Fixed | TTS/STT option labels added |
-| `icons.json` | 🟡 Needs Update | Missing `ai_task` service icon |
-| `hacs.json` | 🟡 Needs Update | Minimal metadata |
+| `icons.json` | ✅ Fixed | `ai_task` service icon added |
+| `hacs.json` | ✅ Fixed | Expanded with recommended metadata |
 
 ---
 

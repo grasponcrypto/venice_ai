@@ -1,3 +1,5 @@
 {
-  "name": "Venice AI"
-} 
+    "name": "Venice AI",
+    "content_in_root": false,
+    "zip_release": true
+}
