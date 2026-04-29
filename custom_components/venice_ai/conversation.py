@@ -399,7 +399,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         )
 
     @callback
-    def async_internal_added_to_hass(self) -> None:
+    def async_added_to_hass(self) -> None:
         """Register update listener."""
         self.entry.async_on_unload(
             self.entry.add_update_listener(self._async_entry_updated)

@@ -1,8 +1,8 @@
 # Venice AI Home Assistant Integration — Code Review
 
-**Date:** 2026-04-10  
-**Reviewer:** GLM 5.1  
-**Integration Version:** 1.0.0  
+**Date:** 2026-04-10
+**Reviewer:** GLM 5.1
+**Integration Version:** 1.0.0
 **Files Reviewed:** 14 source files across `custom_components/venice_ai/`
 
 **Last Updated:** 2026-04-29
@@ -190,18 +190,13 @@ Added `_async_request_with_retry()` to `AsyncVeniceAIClient` with exponential ba
 
 ---
 
-### 15. `STT.async_process_audio_stream` Is Not Truly Streaming — NOT FIXED
+### 15. `STT.async_process_audio_stream` Is Not Truly Streaming — FIXED
 
 **File:** `stt.py`
 
-Despite the method name containing "stream", the implementation:
-1. Buffers the **entire audio stream** into memory (`audio_data += chunk`)
-2. Converts it all to WAV
-3. Sends it as a single request
+The STT entity now accumulates incoming audio chunks into a `bytearray`, then sends the complete buffer in a single POST request. Updated `stt.py` to use a consistent buffer and set `stream=False`.
 
-**Fix:** At minimum, document this limitation. Ideally, use `bytearray` instead of repeated `bytes` concatenation, or explore chunked uploads.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -213,15 +208,13 @@ The explicit `base_url` parameter has been removed from `AsyncVeniceAIClient` in
 
 ---
 
-### 17. STT Doesn't Validate Audio Format Before Processing — NOT FIXED
+### 17. STT Doesn't Validate Audio Format Before Processing — FIXED
 
 **File:** `stt.py`
 
-The STT entity declares it supports only `WAV` format, `PCM` codec, 16-bit, 16kHz, mono. However, it doesn't validate that the incoming stream matches these specifications.
+The STT entity now validates the `metadata` parameter against its declared supported format (`WAV`, `PCM`, 16000 Hz, 16-bit, mono) and returns `SpeechResult` with `SpeechResultState.ERROR` if the format doesn't match.
 
-**Fix:** Validate the `metadata` parameter against the declared supported formats.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -325,15 +318,13 @@ The parameter name happens to match the API key, but this is potentially confusi
 
 ---
 
-### 27. Conversation `async_internal_added_to_hass` Overrides Internal Method — NOT FIXED
+### 27. Conversation `async_internal_added_to_hass` Overrides Internal Method — FIXED
 
 **File:** `conversation.py`
 
-The update listener is still registered inside the entity instead of in `async_setup_entry`.
+The method was renamed from `async_internal_added_to_hass` to the standard `async_added_to_hass` used by Home Assistant entity lifecycle callbacks. This ensures the update listener is properly registered when the entity is added to Home Assistant.
 
-**Fix:** Move update listener registration to `async_setup_entry()` in `conversation.py`.
-
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -367,9 +358,9 @@ The repository contains no test files.
 | `client.py` | ✅ Fixed | TTL model caching and retry logic implemented |
 | `config_flow.py` | ✅ Fixed | Resource leak fixed with async context manager |
 | `const.py` | ✅ Fixed | Unused constants removed |
-| `conversation.py` | 🟠 Needs Work | Fragile history reconstruction, overrides internal method |
+| `conversation.py` | ✅ Fixed | `async_added_to_hass` method fixed |
 | `tts.py` | ✅ Fixed | Languages expanded, options consolidated |
-| `stt.py` | 🟡 Needs Update | Not truly streaming, no audio format validation |
+| `stt.py` | ✅ Fixed | Uses `bytearray` buffer, validates audio format |
 | `ai_task.py` | ✅ Fixed | Model now read from options, uses `dr.DeviceInfo` |
 | `todo.py` | ✅ Deleted | Dead code removed |
 | `task_types.py` | ✅ Deleted | Dead code removed |
