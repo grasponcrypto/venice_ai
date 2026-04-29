@@ -336,15 +336,23 @@ The method was renamed from `async_internal_added_to_hass` to the standard `asyn
 
 ---
 
-### 28. `Voluptuous-OpenAPI` Dependency Is Optional — NOT FIXED
+### 28. `Voluptuous-OpenAPI` Dependency Is Optional — FIXED
 
-**File:** `conversation.py`
+**File:** `__init__.py`
 
-When `voluptuous_openapi` is unavailable, schema conversion falls back to `{"type": "object", "properties": {}}`. There is no setup-time warning.
+Added a setup-time warning in `async_setup()` when `voluptuous_openapi` is not available. This informs users that LLM tool schema conversion will be limited and provides the pip install command to fix it.
 
-**Fix:** Log a warning at integration setup time when `voluptuous_openapi` is not installed.
+```python
+if not _HAS_VOLUPTUOUS_OPENAPI:
+    _LOGGER.warning(
+        "voluptuous-openapi is not installed. LLM tool schema conversion "
+        "will be limited. Install with: pip install voluptuous-openapi"
+    )
+```
 
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
+>>>>+++ REPLACE
+
 
 ---
 

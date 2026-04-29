@@ -29,6 +29,12 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+try:
+    from voluptuous_openapi import convert as _voluptuous_convert  # noqa: F401
+    _HAS_VOLUPTUOUS_OPENAPI = True
+except ImportError:
+    _HAS_VOLUPTUOUS_OPENAPI = False
+
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_AI_TASK = "ai_task"
 PLATFORMS = (Platform.CONVERSATION, Platform.AI_TASK, Platform.TTS, Platform.STT)
@@ -43,6 +49,11 @@ class VeniceAIConfigEntry(ConfigEntry):
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Venice AI Conversation."""
+    if not _HAS_VOLUPTUOUS_OPENAPI:
+        _LOGGER.warning(
+            "voluptuous-openapi is not installed. LLM tool schema conversion "
+            "will be limited. Install with: pip install voluptuous-openapi"
+        )
 
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with Venice AI."""
