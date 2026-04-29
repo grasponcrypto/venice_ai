@@ -13,7 +13,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient, VeniceAIError
-from .const import DOMAIN, LOGGER
+from .const import CONF_CHAT_MODEL, DOMAIN, RECOMMENDED_CHAT_MODEL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ async def async_setup_entry(
     """Set up AI Task entities."""
     _LOGGER.info("Setting up AI Task entities for entry %s", entry.entry_id)
     if not entry.runtime_data:
-        LOGGER.error(
+        _LOGGER.error(
             "Venice AI client not available in runtime_data for entry %s",
-            entry.entry_id
+            entry.entry_id,
         )
         return
     entity = VeniceAITaskEntity(entry)
@@ -56,14 +56,12 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
             entry_type=dr.DeviceEntryType.SERVICE,
         )
         self._client: AsyncVeniceAIClient = entry.runtime_data
-        self._attr_supported_features = (
-            ai_task.AITaskEntityFeature.GENERATE_DATA
-        )
+        self._attr_supported_features = ai_task.AITaskEntityFeature.GENERATE_DATA
         _LOGGER.info(
             "Initialized VeniceAITaskEntity for entry %s (runtime_data=%s, unique_id=%s)",
             entry.entry_id,
             bool(entry.runtime_data),
-            self._attr_unique_id
+            self._attr_unique_id,
         )
 
     async def _async_generate_data(
@@ -72,11 +70,7 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenDataTaskResult:
         """Handle a generate data task."""
-        # For tasks, manually add the instructions as a user message
-        # since async_provide_llm_data requires a valid LLMContext
-        chat_log.content.append(conversation.UserContent(content=task.instructions))
-
-        # Convert chat_log content to Venice messages
+        # Build a local messages list without mutating chat_log.content
         messages = []
         for msg in chat_log.content:
             if isinstance(msg, conversation.SystemContent):
@@ -89,15 +83,19 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
                     "content": msg.content or "",
                 }
                 messages.append(venice_msg)
-            # Skip other types for now
+
+        # Append task instructions as a user message in the local list
+        messages.append({"role": "user", "content": task.instructions})
 
         if not messages or messages[-1].get("role") != "user":
             raise HomeAssistantError("No user message found in chat log")
 
-        # Call Venice AI
+        # Use the configured chat model from options
+        model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+
         try:
             response_data = await self._client.chat.create_non_streaming({
-                "model": "default",
+                "model": model,
                 "messages": messages,
                 "max_tokens": 1000,
                 "temperature": 0.7,
@@ -117,7 +115,6 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
                     data=text,
                 )
 
-            # Parse structured data
             try:
                 data = json.loads(text)
             except json.JSONDecodeError as err:

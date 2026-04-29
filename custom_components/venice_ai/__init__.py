@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
@@ -23,6 +22,7 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import ai_task, conversation
 
+from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
 from .const import DOMAIN, LOGGER
 
 SERVICE_GENERATE_IMAGE = "generate_image"
@@ -30,9 +30,10 @@ SERVICE_AI_TASK = "ai_task"
 PLATFORMS = (Platform.CONVERSATION, Platform.AI_TASK, Platform.TTS, Platform.STT)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+
 class VeniceAIConfigEntry(ConfigEntry):
     """Venice AI config entry with runtime data."""
-    
+
     runtime_data: AsyncVeniceAIClient
 
 
@@ -55,7 +56,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         try:
             response = await client.images.generate(
-                model="default",  # Venice AI uses 'default' model
+                model="default",
                 prompt=call.data["prompt"],
                 size=call.data["size"],
                 quality=call.data["quality"],
@@ -66,7 +67,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except VeniceAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
-        return response.data[0].model_dump(exclude={"b64_json"})
+        # Response is a plain dict, not a Pydantic model
+        data = response.get("data", [{}])[0]
+        result = dict(data)
+        result.pop("b64_json", None)
+        return result
 
     async def generate_data(call: ServiceCall) -> ServiceResponse:
         """Generate data using Venice AI Task."""
@@ -80,13 +85,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
-        # Get the AI Task entity from the platform data
+        # Get the AI Task entity from the entity registry
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(hass)
+        entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
         ai_task_entity = None
-        if "ai_task" in hass.data:
-            for ent in hass.data["ai_task"].entities:
-                if hasattr(ent, 'entry') and ent.entry.entry_id == entry.entry_id:
-                    ai_task_entity = ent
-                    break
+        for reg_entry in entries:
+            if reg_entry.domain == "ai_task" and reg_entry.platform == DOMAIN:
+                ai_task_entity = hass.data.get("ai_task", {}).get("entities", {}).get(reg_entry.entity_id)
+                if ai_task_entity is None:
+                    # Fallback: look up the entity instance from the platform
+                    ai_task_platform = hass.data.get("ai_task", {})
+                    for ent in getattr(ai_task_platform, "entities", []):
+                        if getattr(ent, "entry", None) and ent.entry.entry_id == entry.entry_id:
+                            ai_task_entity = ent
+                            break
+                break
 
         if ai_task_entity is None:
             raise ServiceValidationError(
@@ -95,7 +110,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"entry_id": entry.entry_id},
             )
 
-        # Create task and chat log
         task_text = call.data["task"]
         structure = call.data.get("structure")
 
@@ -104,7 +118,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             structure=structure,
         )
 
-        # Create a simple chat log with the task as user input
         chat_log = conversation.ChatLog(
             conversation_id="service_call",
             content=[
@@ -168,7 +181,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     client = AsyncVeniceAIClient(
         api_key=entry.data[CONF_API_KEY],
         http_client=get_async_client(hass),
-        base_url="https://api.venice.ai/api/v1"
     )
 
     try:
@@ -179,7 +191,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     except VeniceAIError as err:
         raise ConfigEntryNotReady(err) from err
 
-    # Store client in runtime_data
     entry.runtime_data = client
 
     LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
@@ -190,4 +201,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Venice AI."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    client: AsyncVeniceAIClient = entry.runtime_data
+    if client is not None:
+        await client.close()
+    return unload_ok
