@@ -79,7 +79,26 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    async def async_migrate_entry(
+        self, hass: HomeAssistant, entry: ConfigEntry
+    ) -> bool:
+        """Migrate an old config entry to the current version.
+
+        Currently there is only version 1, so no migration is needed.
+        Future versions should handle data and options migration here.
+        """
+        if entry.version == 1:
+            # Current version — nothing to migrate
+            return True
+        _LOGGER.error(
+            "Unable to migrate config entry from version %s. Please recreate the integration.",
+            entry.version,
+        )
+        return False
+
     async def async_step_user(
+>>>>+++ REPLACE
+
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step."""
