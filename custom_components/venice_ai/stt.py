@@ -140,14 +140,52 @@ class VeniceAISTT(SpeechToTextEntity):
         metadata: stt.SpeechMetadata,
         stream: AsyncIterable[bytes],
     ) -> stt.SpeechResult:
-        """Process an audio stream to text."""
+        """Process an audio stream to text.
+
+        Note: This implementation buffers the entire stream in memory,
+        converts it to WAV format, and sends it as a single request.
+        Venice AI does not currently support chunked streaming uploads
+        for transcriptions.
+        """
         from .client import AsyncVeniceAIClient, VeniceAIError
 
+        # Validate metadata against declared supported formats
+        if metadata.format not in self.supported_formats:
+            _LOGGER.error(
+                "Unsupported audio format: %s. Only %s is supported.",
+                metadata.format, self.supported_formats,
+            )
+            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+        if metadata.codec not in self.supported_codecs:
+            _LOGGER.error(
+                "Unsupported audio codec: %s. Only %s is supported.",
+                metadata.codec, self.supported_codecs,
+            )
+            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+        if metadata.bit_rate not in self.supported_bit_rates:
+            _LOGGER.error(
+                "Unsupported bit rate: %s. Only %s is supported.",
+                metadata.bit_rate, self.supported_bit_rates,
+            )
+            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+        if metadata.sample_rate not in self.supported_sample_rates:
+            _LOGGER.error(
+                "Unsupported sample rate: %s. Only %s is supported.",
+                metadata.sample_rate, self.supported_sample_rates,
+            )
+            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+        if metadata.channel not in self.supported_channels:
+            _LOGGER.error(
+                "Unsupported channel count: %s. Only %s is supported.",
+                metadata.channel, self.supported_channels,
+            )
+            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+
         try:
-            # Read all data from the stream
-            audio_data = b""
+            # Read all data from the stream using bytearray for efficiency
+            audio_data = bytearray()
             async for chunk in stream:
-                audio_data += chunk
+                audio_data.extend(chunk)
 
             _LOGGER.debug(
                 "Processing audio stream (%d bytes) with model=%s, format=%s, timestamps=%s",
@@ -158,7 +196,7 @@ class VeniceAISTT(SpeechToTextEntity):
             )
 
             # Convert PCM data to WAV format since Venice AI expects proper WAV files
-            wav_data = _pcm_to_wav(audio_data, sample_rate=16000, num_channels=1, bits_per_sample=16)
+            wav_data = _pcm_to_wav(bytes(audio_data), sample_rate=16000, num_channels=1, bits_per_sample=16)
             _LOGGER.debug("Converted PCM to WAV (%d bytes -> %d bytes)", len(audio_data), len(wav_data))
 
             client: AsyncVeniceAIClient = self.entry.runtime_data
