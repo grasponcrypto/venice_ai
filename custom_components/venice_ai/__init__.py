@@ -85,23 +85,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
-        # Get the AI Task entity from the entity registry
-        from homeassistant.helpers import entity_registry as er
-
-        ent_reg = er.async_get(hass)
-        entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-        ai_task_entity = None
-        for reg_entry in entries:
-            if reg_entry.domain == "ai_task" and reg_entry.platform == DOMAIN:
-                ai_task_entity = hass.data.get("ai_task", {}).get("entities", {}).get(reg_entry.entity_id)
-                if ai_task_entity is None:
-                    # Fallback: look up the entity instance from the platform
-                    ai_task_platform = hass.data.get("ai_task", {})
-                    for ent in getattr(ai_task_platform, "entities", []):
-                        if getattr(ent, "entry", None) and ent.entry.entry_id == entry.entry_id:
-                            ai_task_entity = ent
-                            break
-                break
+        # Get the AI Task entity from the integration's own data store
+        ai_task_entity = hass.data.get(DOMAIN, {}).get(entry.entry_id)
 
         if ai_task_entity is None:
             raise ServiceValidationError(
@@ -202,6 +187,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Venice AI."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # Remove our entity reference from the integration data store
+    domain_data = hass.data.get(DOMAIN, {})
+    domain_data.pop(entry.entry_id, None)
     client: AsyncVeniceAIClient = entry.runtime_data
     if client is not None:
         await client.close()

@@ -5,7 +5,7 @@
     "documentation": "https://github.com/grasponcrypto/venice_ai",
     "issue_tracker": "https://github.com/grasponcrypto/venice_ai/issues",
     "requirements": [],
-    "dependencies": ["conversation"],
+    "dependencies": ["conversation", "ai_task"],
     "after_dependencies": ["assist_pipeline", "intent"],
     "codeowners": ["@grasponcrypto"],
     "iot_class": "cloud_polling",

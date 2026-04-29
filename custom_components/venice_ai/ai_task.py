@@ -34,6 +34,7 @@ async def async_setup_entry(
     entity = VeniceAITaskEntity(entry)
     _LOGGER.info("Created VeniceAITaskEntity: %s", entity.unique_id)
     async_add_entities([entity])
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entity
     _LOGGER.info("Added VeniceAITaskEntity to Home Assistant")
 
 
