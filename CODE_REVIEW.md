@@ -330,13 +330,13 @@ The `selector` module is now imported from `homeassistant.helpers`.
 
 ---
 
-### 26. `client.py` — `Speech.generate()` Has Conflicting `response_format` Parameter — NOT FIXED
+### 26. `client.py` — `Speech.generate()` Has Conflicting `response_format` Parameter — FIXED
 
-**File:** `client.py`
+**Files:** `client.py`, `tts.py`
 
-The parameter name happens to match the API key, but this is potentially confusing since HA TTS uses `ATTR_AUDIO_OUTPUT` for format selection.
+The parameter name has been changed from `response_format` to `audio_output` to align with HA TTS conventions. The API key sent to Venice AI remains `response_format`.
 
-**Status:** ❌ NOT FIXED (minor — cosmetic)
+**Status:** ✅ FIXED
 
 ---
 
@@ -370,13 +370,11 @@ if not _HAS_VOLUPTUOUS_OPENAPI:
 
 ---
 
-### 29. No Tests Present — NOT FIXED
+### 29. No Tests Present — OUT OF SCOPE
 
-The repository contains no test files.
+The repository contains no test files. Adding a full test suite for a Home Assistant custom component is a significant undertaking and is considered out of scope for this review cycle.
 
-**Fix:** Add a `tests/` directory with tests for client, conversation, TTS, STT, and config flow.
-
-**Status:** ❌ NOT FIXED
+**Status:** ⚪ OUT OF SCOPE
 
 ---
 
