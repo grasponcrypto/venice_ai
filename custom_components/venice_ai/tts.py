@@ -21,6 +21,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient
 from .const import (
+    CONF_TTS_MODEL,
+    CONF_TTS_RESPONSE_FORMAT,
+    CONF_TTS_SPEED,
+    CONF_TTS_VOICE,
     DOMAIN,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
@@ -70,7 +74,8 @@ class VeniceAITTS(TextToSpeechEntity):
     @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        return ["en"]
+        # Venice AI kokoro TTS supports multiple languages via different voice sets
+        return ["en", "zh", "fr", "hi", "it", "ja", "pl", "es"]
 
     @property
     def default_language(self) -> str:
@@ -83,21 +88,19 @@ class VeniceAITTS(TextToSpeechEntity):
         return [
             ATTR_VOICE,
             ATTR_AUDIO_OUTPUT,
-            "tts_voice",
             "tts_model",
-            "tts_response_format",
             "tts_speed",
         ]
 
     @property
     def default_options(self) -> dict[str, Any]:
-        """Return default options."""
+        """Return default options mapped from config entry."""
+        options = self._config_entry.options
         return {
-            ATTR_AUDIO_OUTPUT: RECOMMENDED_TTS_RESPONSE_FORMAT,
-            "tts_voice": RECOMMENDED_TTS_VOICE,
-            "tts_model": RECOMMENDED_TTS_MODEL,
-            "tts_response_format": RECOMMENDED_TTS_RESPONSE_FORMAT,
-            "tts_speed": RECOMMENDED_TTS_SPEED,
+            ATTR_VOICE: options.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE),
+            ATTR_AUDIO_OUTPUT: options.get(CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT),
+            "tts_model": options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
+            "tts_speed": options.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED),
         }
 
     async def async_get_tts_audio(
@@ -107,11 +110,9 @@ class VeniceAITTS(TextToSpeechEntity):
         if options is None:
             options = {}
 
-        voice = options.get(ATTR_VOICE) or options.get("tts_voice", RECOMMENDED_TTS_VOICE)
+        voice = options.get(ATTR_VOICE, RECOMMENDED_TTS_VOICE)
         model = options.get("tts_model", RECOMMENDED_TTS_MODEL)
-        response_format = options.get(ATTR_AUDIO_OUTPUT) or options.get(
-            "tts_response_format", RECOMMENDED_TTS_RESPONSE_FORMAT
-        )
+        response_format = options.get(ATTR_AUDIO_OUTPUT, RECOMMENDED_TTS_RESPONSE_FORMAT)
         speed = options.get("tts_speed", RECOMMENDED_TTS_SPEED)
 
         _LOGGER.debug("Generating TTS for message: %s", message)

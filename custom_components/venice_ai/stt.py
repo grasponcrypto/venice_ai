@@ -107,8 +107,8 @@ class VeniceAISTT(SpeechToTextEntity):
     @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        # Currently Venice AI supports English
-        return ["en"]
+        # Venice AI parakeet model supports these languages
+        return ["en", "zh", "fr", "hi", "it", "ja", "pl", "es"]
 
     @property
     def supported_formats(self) -> list[stt.AudioFormats]:
