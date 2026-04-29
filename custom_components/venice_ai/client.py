@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -146,14 +147,26 @@ class ChatCompletions:
 
 
 class Models:
-    """Models API for Venice AI."""
+    """Models API for Venice AI with TTL caching."""
+
+    _CACHE_TTL_SECONDS = 3600  # 1 hour
 
     def __init__(self, client: "AsyncVeniceAIClient") -> None:
         """Initialize models API."""
         self.client = client
+        self._cache: dict[str, tuple[list[dict], float]] = {}
 
     async def list(self, model_type: str = "text") -> list[dict]:
-        """List available models."""
+        """List available models with TTL caching."""
+        now = time.monotonic()
+        cached = self._cache.get(model_type)
+        if cached is not None:
+            models, timestamp = cached
+            if now - timestamp < self._CACHE_TTL_SECONDS:
+                _LOGGER.debug("Returning cached %s models (%d entries, age=%.0fs)", model_type, len(models), now - timestamp)
+                return models
+            _LOGGER.debug("Cache expired for %s models, fetching fresh", model_type)
+
         response_text = None
         url = f"{self.client._base_url}/models"
         _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
@@ -167,6 +180,7 @@ class Models:
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
+            self._cache[model_type] = (models, now)
             _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:

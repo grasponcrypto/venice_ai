@@ -130,15 +130,29 @@ model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
 
 ---
 
-### 11. `client.py` Commented-Out Model Caching — NOT FIXED
+### 11. `client.py` Commented-Out Model Caching — FIXED
 
 **File:** `client.py`
 
-The options flow still calls `self._client.models.list()` twice (once for text models, once for audio models) every time the user opens the options form. There is no caching, meaning two API calls are made each time.
+The `Models` class now implements a TTL cache (1 hour) keyed by `model_type`:
 
-**Fix:** Implement model caching with a TTL (e.g., 1 hour) in `AsyncVeniceAIClient` or `Models` class.
+```python
+class Models:
+    _CACHE_TTL_SECONDS = 3600  # 1 hour
 
-**Status:** ❌ NOT FIXED
+    async def list(self, model_type: str = "text") -> list[dict]:
+        now = time.monotonic()
+        cached = self._cache.get(model_type)
+        if cached is not None:
+            models, timestamp = cached
+            if now - timestamp < self._CACHE_TTL_SECONDS:
+                return models
+        # ...fetch and cache fresh data
+```
+
+This eliminates redundant API calls when the user repeatedly opens the options flow within the TTL window.
+
+**Status:** ✅ FIXED
 
 ---
 
@@ -379,7 +393,7 @@ The repository contains no test files.
 | File | Status | Key Issues |
 |---|---|---|
 | `__init__.py` | ✅ Fixed | `ai_task` service no longer uses `hass.data` internals |
-| `client.py` | 🟡 Improved | Missing model caching, no retry logic |
+| `client.py` | 🟡 Improved | TTL model caching implemented, no retry logic |
 | `config_flow.py` | ✅ Fixed | Resource leak fixed with async context manager |
 | `const.py` | ✅ Fixed | Unused constants removed |
 | `conversation.py` | 🟠 Needs Work | Fragile history reconstruction, logger inconsistency, overrides internal method |
