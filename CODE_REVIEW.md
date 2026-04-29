@@ -253,17 +253,17 @@ The options `tts_voice`, `tts_model`, `tts_response_format`, and `tts_speed` are
 
 ---
 
-### 20. `strings.json` Missing TTS/STT Option Labels — NOT FIXED
+### 20. `strings.json` Missing TTS/STT Option Labels — FIXED
 
 **File:** `strings.json`
 
-The options step `"init"` is missing labels for:
+The options step `"init"` now includes labels for:
 - `tts_model`, `tts_voice`, `tts_response_format`, `tts_speed`
 - `stt_model`, `stt_response_format`, `stt_timestamps`
 
-**Fix:** Add TTS/STT option labels to `strings.json`.
+**Fix:** Added TTS/STT option labels to `strings.json`.
 
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED
 
 ---
 
@@ -404,7 +404,7 @@ The repository contains no test files.
 | `task_types.py` | ✅ Deleted | Dead code removed |
 | `manifest.json` | ✅ Fixed | `ai_task` dependency added |
 | `services.yaml` | 🟡 Acceptable | Missing icon reference for `ai_task` |
-| `strings.json` | 🟡 Needs Update | Missing TTS/STT option labels |
+| `strings.json` | ✅ Fixed | TTS/STT option labels added |
 | `icons.json` | 🟡 Needs Update | Missing `ai_task` service icon |
 | `hacs.json` | 🟡 Needs Update | Minimal metadata |
 

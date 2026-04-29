@@ -30,7 +30,14 @@
             "top_p": "Top P (0-1)",
             "max_tokens": "Max Tokens",
             "strip_thinking_response": "Strip thinking response (for reasoning models)",
-            "disable_thinking": "Disable thinking (for reasoning models)"
+            "disable_thinking": "Disable thinking (for reasoning models)",
+            "tts_model": "TTS Model",
+            "tts_voice": "TTS Voice",
+            "tts_response_format": "TTS Response Format",
+            "tts_speed": "TTS Speed",
+            "stt_model": "STT Model",
+            "stt_response_format": "STT Response Format",
+            "stt_timestamps": "STT Include Timestamps"
           }
         }
       }
