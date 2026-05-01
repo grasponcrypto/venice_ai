@@ -210,7 +210,7 @@ class VeniceAIConversationEntity(ConversationEntity):
     @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        return ["en"]
+        return ["en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "zh"]
 
     @property
     def supported_options(self) -> list[str]:
