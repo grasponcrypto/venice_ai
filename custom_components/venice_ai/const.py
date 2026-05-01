@@ -51,3 +51,7 @@ CONF_STT_RESPONSE_FORMAT = "stt_response_format"
 RECOMMENDED_STT_RESPONSE_FORMAT = "json"
 CONF_STT_TIMESTAMPS = "stt_timestamps"
 RECOMMENDED_STT_TIMESTAMPS = False
+
+# Conversation tool iteration limit
+CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
+RECOMMENDED_MAX_TOOL_ITERATIONS = 5

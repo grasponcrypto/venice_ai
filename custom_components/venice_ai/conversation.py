@@ -19,6 +19,7 @@ from .client import AsyncVeniceAIClient, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
+    CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -27,6 +28,7 @@ from .const import (
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
@@ -215,7 +217,7 @@ class VeniceAIConversationEntity(ConversationEntity):
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P]
+        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS]
 
     async def async_process(
         self, user_input: ConversationInput, context: Any = None
@@ -276,8 +278,10 @@ class VeniceAIConversationEntity(ConversationEntity):
         assistant_response_content = None
         text_content = ""
 
+        max_tool_iterations = options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
+
         try:
-            for iteration in range(MAX_TOOL_ITERATIONS):
+            for iteration in range(max_tool_iterations):
                 messages = _convert_chat_log_to_venice_messages(
                     chat_log, system_prompt, strip_thinking=strip_thinking
                 )
@@ -383,7 +387,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     )
                     chat_log.content.append(tool_result_content)
             else:
-                _LOGGER.warning("Reached max tool iterations (%d)", MAX_TOOL_ITERATIONS)
+                _LOGGER.warning("Reached max tool iterations (%d)", max_tool_iterations)
                 assistant_response_content = text_content or ""
 
             if assistant_response_content is None:

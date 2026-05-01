@@ -14,7 +14,8 @@
         "unknown": "Unexpected error"
       },
       "abort": {
-        "already_configured": "Venice AI is already configured"
+        "already_configured": "Venice AI is already configured",
+        "reauth_successful": "Re-authentication was successful"
       }
     },
     "options": {
@@ -31,6 +32,7 @@
             "max_tokens": "Max Tokens",
             "strip_thinking_response": "Strip thinking response (for reasoning models)",
             "disable_thinking": "Disable thinking (for reasoning models)",
+            "max_tool_iterations": "Max Tool Iterations",
             "tts_model": "TTS Model",
             "tts_voice": "TTS Voice",
             "tts_response_format": "TTS Response Format",

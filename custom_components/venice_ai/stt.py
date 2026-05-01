@@ -185,6 +185,11 @@ class VeniceAISTT(SpeechToTextEntity):
             async for chunk in stream:
                 audio_data.extend(chunk)
 
+            # Handle empty audio streams gracefully
+            if len(audio_data) == 0:
+                _LOGGER.warning("Received empty audio stream for transcription")
+                return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+
             _LOGGER.debug(
                 "Processing audio stream (%d bytes) with model=%s, format=%s, timestamps=%s",
                 len(audio_data),

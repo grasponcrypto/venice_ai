@@ -31,6 +31,7 @@ from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
+    CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -46,6 +47,7 @@ from .const import (
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
     RECOMMENDED_TTS_MODEL,
@@ -130,6 +132,54 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+        )
+
+    async def async_step_reauth(
+        self, entry_data: MappingProxyType[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle re-authentication when API key becomes invalid."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm re-authentication with new API key."""
+        errors: dict[str, str] = {}
+        reauth_entry = self._get_reauth_entry()
+
+        if user_input is not None:
+            try:
+                _LOGGER.debug("Validating new Venice AI API key for re-auth")
+                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                    models_response = await client.models.list()
+                    if not isinstance(models_response, list):
+                        raise VeniceAIError("Invalid models response")
+
+                _LOGGER.debug("Re-auth API key validation successful")
+            except AuthenticationError:
+                errors["base"] = "invalid_auth"
+                _LOGGER.warning("Venice AI re-authentication failed: invalid API key")
+            except VeniceAIError as err:
+                errors["base"] = "cannot_connect"
+                _LOGGER.error("Cannot connect to Venice AI during re-auth: %s", err)
+            except Exception:
+                _LOGGER.exception("Unexpected exception during Venice AI re-auth validation")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    reauth_entry,
+                    data={**reauth_entry.data, CONF_API_KEY: user_input[CONF_API_KEY]},
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_API_KEY): cv.string,
+                }
+            ),
+            errors=errors,
+            description_placeholders={"name": reauth_entry.title},
         )
 
     @staticmethod
@@ -288,6 +338,12 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     CONF_DISABLE_THINKING,
                     description={"suggested_value": options.get(CONF_DISABLE_THINKING, False)},
                 ): BooleanSelector(),
+                vol.Optional(
+                    CONF_MAX_TOOL_ITERATIONS,
+                    description={"suggested_value": options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)},
+                ): NumberSelector(
+                    NumberSelectorConfig(min=1, max=20, step=1, mode="slider")
+                ),
                 # TTS options
                 vol.Optional(
                     CONF_TTS_MODEL,
