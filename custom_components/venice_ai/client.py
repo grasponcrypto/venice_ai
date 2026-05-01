@@ -435,6 +435,7 @@ class AsyncVeniceAIClient:
         self._base_url = base_url.rstrip("/")
         self._http_client = http_client if http_client else httpx.AsyncClient()
         self._should_close_client = not http_client
+        self._closed = False
 
         self._headers = {
             "Authorization": f"Bearer {api_key}",
@@ -498,6 +499,9 @@ class AsyncVeniceAIClient:
 
     async def close(self) -> None:
         """Close the httpx client if it was created internally."""
+        if self._closed:
+            return
+        self._closed = True
         if self._should_close_client:
             await self._http_client.aclose()
 
