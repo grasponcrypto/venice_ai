@@ -6,6 +6,8 @@ import logging
 
 import voluptuous as vol
 
+from dataclasses import dataclass
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import (
@@ -34,6 +36,7 @@ except ImportError:
 
 from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
 from .const import DOMAIN
+from .coordinator import VeniceAIDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,10 +57,18 @@ if _HAS_AI_TASK:
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
+@dataclass
+class VeniceAIRuntimeData:
+    """Runtime data stored in the config entry."""
+
+    client: AsyncVeniceAIClient
+    coordinator: VeniceAIDataUpdateCoordinator
+
+
 class VeniceAIConfigEntry(ConfigEntry):
     """Venice AI config entry with runtime data."""
 
-    runtime_data: AsyncVeniceAIClient
+    runtime_data: VeniceAIRuntimeData
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -80,7 +91,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
-        client: AsyncVeniceAIClient = entry.runtime_data
+        client: AsyncVeniceAIClient = entry.runtime_data.client
 
         try:
             response = await client.images.generate(
@@ -210,7 +221,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     except VeniceAIError as err:
         raise ConfigEntryNotReady(err) from err
 
-    entry.runtime_data = client
+    coordinator = VeniceAIDataUpdateCoordinator(hass, client)
+    entry.runtime_data = VeniceAIRuntimeData(
+        client=client,
+        coordinator=coordinator,
+    )
 
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -226,7 +241,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data.pop(entry.entry_id, None)
         if not domain_data:
             hass.data.pop(DOMAIN, None)
-    client: AsyncVeniceAIClient = entry.runtime_data
-    if isinstance(client, AsyncVeniceAIClient):
-        await client.close()
+    runtime_data: VeniceAIRuntimeData = entry.runtime_data
+    if isinstance(runtime_data.client, AsyncVeniceAIClient):
+        await runtime_data.client.close()
     return unload_ok

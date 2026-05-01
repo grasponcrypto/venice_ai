@@ -43,18 +43,18 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Venice AI TTS platform."""
-    client: AsyncVeniceAIClient = config_entry.runtime_data
-    async_add_entities([VeniceAITTS(client, config_entry)])
+    from . import VeniceAIRuntimeData
+
+    runtime_data: VeniceAIRuntimeData = config_entry.runtime_data
+    async_add_entities([VeniceAITTS(config_entry)])
 
 
 class VeniceAITTS(TextToSpeechEntity):
     """Venice AI TTS entity."""
 
-    def __init__(
-        self, client: AsyncVeniceAIClient, config_entry: ConfigEntry
-    ) -> None:
+    def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize TTS entity."""
-        self._client = client
+        self._client = config_entry.runtime_data.client
         self._config_entry = config_entry
         self._name = "Venice AI TTS"
         self._attr_unique_id = f"{config_entry.entry_id}_tts"

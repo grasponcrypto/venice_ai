@@ -193,10 +193,10 @@ def _convert_chat_log_to_venice_messages(
 class VeniceAIConversationEntity(ConversationEntity):
     """Venice AI conversation entity."""
 
-    def __init__(self, entry: ConfigEntry, client: AsyncVeniceAIClient) -> None:
+    def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the entity."""
         self.entry = entry
-        self._client = client
+        self._client = entry.runtime_data.client
         self._attr_unique_id = f"{entry.entry_id}_conversation"
         self._attr_name = entry.title
         self._attr_device_info = dr.DeviceInfo(
@@ -441,15 +441,15 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Venice AI conversation entity."""
-    if not entry.runtime_data:
+    from . import VeniceAIRuntimeData
+
+    runtime_data: VeniceAIRuntimeData = entry.runtime_data
+    if not runtime_data or not runtime_data.client:
         _LOGGER.error(
             "Venice AI client not available in runtime_data for entry %s",
             entry.entry_id,
         )
         return
 
-    entity = VeniceAIConversationEntity(
-        entry,
-        entry.runtime_data,
-    )
+    entity = VeniceAIConversationEntity(entry)
     async_add_entities([entity])

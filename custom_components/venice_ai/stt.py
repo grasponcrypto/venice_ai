@@ -67,7 +67,6 @@ async def async_setup_entry(
     """Set up Venice AI STT entity."""
     async_add_entities([
         VeniceAISTT(
-            hass,
             entry,
             entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
             entry.options.get(
@@ -83,7 +82,6 @@ class VeniceAISTT(SpeechToTextEntity):
 
     def __init__(
         self,
-        hass: HomeAssistant,
         entry: ConfigEntry,
         model: str,
         response_format: str,
@@ -199,7 +197,7 @@ class VeniceAISTT(SpeechToTextEntity):
             wav_data = _pcm_to_wav(bytes(audio_data), sample_rate=16000, num_channels=1, bits_per_sample=16)
             _LOGGER.debug("Converted PCM to WAV (%d bytes -> %d bytes)", len(audio_data), len(wav_data))
 
-            client: AsyncVeniceAIClient = self.entry.runtime_data
+            client: AsyncVeniceAIClient = self.entry.runtime_data.client
 
             result = await client.transcriptions.create(
                 audio_data=wav_data,

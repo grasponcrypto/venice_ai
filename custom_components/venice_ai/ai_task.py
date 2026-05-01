@@ -37,7 +37,10 @@ async def async_setup_entry(
         )
         return
     _LOGGER.info("Setting up AI Task entities for entry %s", entry.entry_id)
-    if not entry.runtime_data:
+    from . import VeniceAIRuntimeData
+
+    runtime_data: VeniceAIRuntimeData = entry.runtime_data
+    if not runtime_data or not runtime_data.client:
         _LOGGER.error(
             "Venice AI client not available in runtime_data for entry %s",
             entry.entry_id,
@@ -76,7 +79,7 @@ else:
                 model="Venice AI Task",
                 entry_type=dr.DeviceEntryType.SERVICE,
             )
-            self._client: AsyncVeniceAIClient = entry.runtime_data
+            self._client: AsyncVeniceAIClient = entry.runtime_data.client
             self._attr_supported_features = ai_task.AITaskEntityFeature.GENERATE_DATA
             _LOGGER.info(
                 "Initialized VeniceAITaskEntity for entry %s (runtime_data=%s, unique_id=%s)",
