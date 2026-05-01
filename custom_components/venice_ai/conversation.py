@@ -26,6 +26,7 @@ from .const import (
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
     DOMAIN,
+    MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
@@ -190,6 +191,26 @@ def _convert_chat_log_to_venice_messages(
             _LOGGER.warning("Unsupported message type for Venice conversion: %s", type(msg))
 
     return messages
+
+
+def _trim_chat_log(chat_log: ChatLog) -> None:
+    """Trim chat log to prevent unbounded growth during long conversations.
+
+    Preserves the first user message and the most recent messages up to
+    MAX_CHAT_LOG_LENGTH. System and tool-result messages are trimmed first.
+    """
+    content = chat_log.content
+    if len(content) <= MAX_CHAT_LOG_LENGTH:
+        return
+
+    # Always keep the first message (initial user prompt)
+    keep_first = [content[0]]
+    tail = content[-(MAX_CHAT_LOG_LENGTH - 1):]
+    trimmed = keep_first + tail
+    _LOGGER.debug(
+        "Trimmed chat log from %d to %d messages", len(content), len(trimmed)
+    )
+    chat_log.content = trimmed
 
 
 class VeniceAIConversationEntity(ConversationEntity):
@@ -386,6 +407,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                         tool_result=tool_result,
                     )
                     chat_log.content.append(tool_result_content)
+
+                # Trim chat log to prevent unbounded growth after processing all tool calls
+                _trim_chat_log(chat_log)
             else:
                 _LOGGER.warning("Reached max tool iterations (%d)", max_tool_iterations)
                 assistant_response_content = text_content or ""

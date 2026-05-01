@@ -55,3 +55,4 @@ RECOMMENDED_STT_TIMESTAMPS = False
 # Conversation tool iteration limit
 CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
 RECOMMENDED_MAX_TOOL_ITERATIONS = 5
+MAX_CHAT_LOG_LENGTH = 50
