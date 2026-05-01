@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -35,6 +36,7 @@ class ChatCompletions:
         """Initialize chat completions."""
         self.client = client
 
+    @asynccontextmanager
     async def create(
         self,
         model: str,
@@ -45,7 +47,7 @@ class ChatCompletions:
         venice_parameters: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
-    ) -> AsyncGenerator[ChatCompletionChunk, None]:
+    ) -> AsyncGenerator[AsyncGenerator[ChatCompletionChunk, None], None]:
         """Create a streaming chat completion."""
         data: dict[str, Any] = {
             "model": model,
@@ -77,20 +79,12 @@ class ChatCompletions:
             response = await self.client._http_client.send(request, stream=True)
             response.raise_for_status()
 
-            async for line in response.aiter_lines():
-                if not line or line == "data: [DONE]":
-                    continue
-                if line.startswith("data: "):
-                    try:
-                        chunk_data = json.loads(line[6:])
-                        yield ChatCompletionChunk(chunk_data)
-                    except json.JSONDecodeError:
-                        _LOGGER.warning("Failed to decode stream chunk: %s", line)
-                else:
-                    _LOGGER.warning("Received unexpected line in stream: %s", line)
-
         except httpx.HTTPStatusError as err:
-            error_detail = err.response.text
+            error_detail = ""
+            try:
+                error_detail = err.response.text
+            except Exception:
+                pass
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key") from err
@@ -98,9 +92,25 @@ class ChatCompletions:
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI request error: %s", err)
             raise VeniceAIError(f"Request error: {err}") from err
-        finally:
-            if response is not None:
-                await response.aclose()
+
+        async def _stream() -> AsyncGenerator[ChatCompletionChunk, None]:
+            try:
+                async for line in response.aiter_lines():
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if line.startswith("data: "):
+                        try:
+                            chunk_data = json.loads(line[6:])
+                            yield ChatCompletionChunk(chunk_data)
+                        except json.JSONDecodeError:
+                            _LOGGER.warning("Failed to decode stream chunk: %s", line)
+                    else:
+                        _LOGGER.warning("Received unexpected line in stream: %s", line)
+            finally:
+                if response is not None:
+                    await response.aclose()
+
+        yield _stream()
 
     async def create_non_streaming(
         self,
@@ -448,7 +458,6 @@ class AsyncVeniceAIClient:
         max_retries = 3
         retryable_statuses = {429, 500, 502, 503}
         base_delay = 1.0
-        last_err = None
 
         url = f"{self._base_url}{endpoint}"
 
@@ -458,6 +467,11 @@ class AsyncVeniceAIClient:
 
                 if response.status_code in retryable_statuses:
                     if attempt < max_retries:
+                        # Fully consume response body to free connection before retry
+                        try:
+                            await response.aread()
+                        except Exception:
+                            pass
                         delay = min(base_delay * (2 ** attempt), 30.0)
                         _LOGGER.warning(
                             "Venice AI API returned HTTP %d, retrying in %.1fs (attempt %d/%d)",
@@ -469,7 +483,6 @@ class AsyncVeniceAIClient:
                 return response
 
             except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as err:
-                last_err = err
                 if attempt < max_retries:
                     delay = min(base_delay * (2 ** attempt), 30.0)
                     _LOGGER.warning(
@@ -478,8 +491,9 @@ class AsyncVeniceAIClient:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    raise last_err from err
+                    raise VeniceAIError(f"Max retries exceeded: {err}") from err
 
+        # Should never reach here; all retry attempts exhausted
         raise VeniceAIError("Max retries exceeded")
 
     async def close(self) -> None:

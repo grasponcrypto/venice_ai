@@ -15,6 +15,7 @@ from homeassistant.core import (
     SupportsResponse,
 )
 from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
     ConfigEntryNotReady,
     HomeAssistantError,
     ServiceValidationError,
@@ -22,7 +23,14 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import config_validation as cv, selector
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.components import ai_task, conversation
+from homeassistant.components import conversation
+
+# Conditional import for ai_task (availability depends on HA version)
+try:
+    from homeassistant.components import ai_task
+    _HAS_AI_TASK = True
+except ImportError:
+    _HAS_AI_TASK = False
 
 from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
 from .const import DOMAIN
@@ -37,7 +45,12 @@ except ImportError:
 
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_AI_TASK = "ai_task"
-PLATFORMS = (Platform.CONVERSATION, Platform.AI_TASK, Platform.TTS, Platform.STT)
+PLATFORMS = [Platform.CONVERSATION, Platform.TTS, Platform.STT]
+if _HAS_AI_TASK:
+    ai_task_platform = getattr(Platform, "AI_TASK", None)
+    if ai_task_platform:
+        PLATFORMS.append(ai_task_platform)
+
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
@@ -50,7 +63,7 @@ class VeniceAIConfigEntry(ConfigEntry):
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Venice AI Conversation."""
     if not _HAS_VOLUPTUOUS_OPENAPI:
-        _LOGGER.warning(
+        _LOGGER.debug(
             "voluptuous-openapi is not installed. LLM tool schema conversion "
             "will be limited. Install with: pip install voluptuous-openapi"
         )
@@ -82,57 +95,82 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except VeniceAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
-        # Response is a plain dict, not a Pydantic model
-        data = response.get("data", [{}])[0]
-        result = dict(data)
+        if not isinstance(response, dict):
+            raise HomeAssistantError(
+                f"Unexpected image API response type: {type(response).__name__}"
+            )
+        data = response.get("data", [{}])
+        if not data or not isinstance(data, list) or len(data) < 1:
+            raise HomeAssistantError("No image data returned from Venice AI")
+        result = dict(data[0])
         result.pop("b64_json", None)
         return result
 
-    async def generate_data(call: ServiceCall) -> ServiceResponse:
-        """Generate data using Venice AI Task."""
-        entry_id = call.data["config_entry"]
-        entry = hass.config_entries.async_get_entry(entry_id)
+    # Only register AI Task service if platform is available
+    if _HAS_AI_TASK:
+        async def generate_data(call: ServiceCall) -> ServiceResponse:
+            """Generate data using Venice AI Task."""
+            entry_id = call.data["config_entry"]
+            entry = hass.config_entries.async_get_entry(entry_id)
 
-        if entry is None or entry.domain != DOMAIN:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_config_entry",
-                translation_placeholders={"config_entry": entry_id},
+            if entry is None or entry.domain != DOMAIN:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_config_entry",
+                    translation_placeholders={"config_entry": entry_id},
+                )
+
+            # Get the AI Task entity from the integration's own data store
+            ai_task_entity = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+
+            if ai_task_entity is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="entity_not_found",
+                    translation_placeholders={"entry_id": entry.entry_id},
+                )
+
+            task_text = call.data["task"]
+            structure = call.data.get("structure")
+
+            gen_task = ai_task.GenDataTask(
+                task=task_text,
+                structure=structure,
             )
 
-        # Get the AI Task entity from the integration's own data store
-        ai_task_entity = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-
-        if ai_task_entity is None:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="entity_not_found",
-                translation_placeholders={"entry_id": entry.entry_id},
+            chat_log = conversation.ChatLog(
+                conversation_id="service_call",
+                content=[
+                    conversation.UserContent(content=task_text)
+                ]
             )
 
-        task_text = call.data["task"]
-        structure = call.data.get("structure")
+            try:
+                result = await ai_task_entity._async_generate_data(gen_task, chat_log)
+                return {
+                    "conversation_id": result.conversation_id,
+                    "data": result.data,
+                }
+            except Exception as err:
+                raise HomeAssistantError(f"Error generating data: {err}") from err
 
-        gen_task = ai_task.GenDataTask(
-            task=task_text,
-            structure=structure,
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_AI_TASK,
+            generate_data,
+            schema=vol.Schema(
+                {
+                    vol.Required("config_entry"): selector.ConfigEntrySelector(
+                        {
+                            "integration": DOMAIN,
+                        }
+                    ),
+                    vol.Required("task"): cv.string,
+                    vol.Optional("structure"): cv.string,
+                }
+            ),
+            supports_response=SupportsResponse.ONLY,
         )
-
-        chat_log = conversation.ChatLog(
-            conversation_id="service_call",
-            content=[
-                conversation.UserContent(content=task_text)
-            ]
-        )
-
-        try:
-            result = await ai_task_entity._async_generate_data(gen_task, chat_log)
-            return {
-                "conversation_id": result.conversation_id,
-                "data": result.data,
-            }
-        except Exception as err:
-            raise HomeAssistantError(f"Error generating data: {err}") from err
 
     hass.services.async_register(
         DOMAIN,
@@ -155,24 +193,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         ),
         supports_response=SupportsResponse.ONLY,
     )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_AI_TASK,
-        generate_data,
-        schema=vol.Schema(
-            {
-                vol.Required("config_entry"): selector.ConfigEntrySelector(
-                    {
-                        "integration": DOMAIN,
-                    }
-                ),
-                vol.Required("task"): cv.string,
-                vol.Optional("structure"): cv.string,
-            }
-        ),
-        supports_response=SupportsResponse.ONLY,
-    )
     return True
 
 
@@ -186,8 +206,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     try:
         await client.models.list()
     except AuthenticationError as err:
-        _LOGGER.error("Invalid API key: %s", err)
-        return False
+        raise ConfigEntryAuthFailed("Invalid API key") from err
     except VeniceAIError as err:
         raise ConfigEntryNotReady(err) from err
 
@@ -202,10 +221,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Venice AI."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    # Remove our entity reference from the integration data store
-    domain_data = hass.data.get(DOMAIN, {})
-    domain_data.pop(entry.entry_id, None)
+    domain_data = hass.data.get(DOMAIN)
+    if domain_data is not None:
+        domain_data.pop(entry.entry_id, None)
+        if not domain_data:
+            hass.data.pop(DOMAIN, None)
     client: AsyncVeniceAIClient = entry.runtime_data
-    if client is not None:
+    if isinstance(client, AsyncVeniceAIClient):
         await client.close()
     return unload_ok

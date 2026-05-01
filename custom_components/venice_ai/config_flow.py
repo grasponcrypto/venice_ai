@@ -97,8 +97,6 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         return False
 
     async def async_step_user(
->>>>+++ REPLACE
-
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step."""
@@ -240,6 +238,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 tts_models_options = [SelectOptionDict(label=RECOMMENDED_TTS_MODEL, value=RECOMMENDED_TTS_MODEL)]
             if not stt_models_options:
                 stt_models_options = [SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)]
+        finally:
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
 
         options_schema = vol.Schema(
             {

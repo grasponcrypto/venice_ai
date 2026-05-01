@@ -286,23 +286,46 @@ class VeniceAIConversationEntity(ConversationEntity):
                     _LOGGER.error("Message list is empty before sending to API.")
                     raise HomeAssistantError("Message list is empty before sending to API.")
 
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    tools=venice_tools if venice_tools else None,
-                    stream=False,
+                response_data = await self._client.chat.completions.create_non_streaming(
+                    {
+                        "model": model,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                        "tools": venice_tools if venice_tools else None,
+                        "stream": False,
+                    }
                 )
+                if not isinstance(response_data, dict):
+                    _LOGGER.error(
+                        "Invalid response type from Venice AI: %s",
+                        type(response_data).__name__,
+                    )
+                    raise HomeAssistantError(
+                        f"Received invalid response type from Venice AI: {type(response_data).__name__}"
+                    )
 
-                response_data = response
-                if not response_data or not response_data.get("choices"):
+                if not response_data.get("choices"):
                     _LOGGER.error("Invalid response from Venice AI: %s", response_data)
                     raise HomeAssistantError("Received invalid response from Venice AI")
 
                 choice = response_data["choices"][0]
+                if not isinstance(choice, dict):
+                    _LOGGER.error(
+                        "Invalid choice type in Venice AI response: %s",
+                        type(choice).__name__,
+                    )
+                    raise HomeAssistantError("Received invalid choice format from Venice AI")
+
                 message = choice.get("message", {})
+                if not isinstance(message, dict):
+                    _LOGGER.error(
+                        "Invalid message type in Venice AI response: %s",
+                        type(message).__name__,
+                    )
+                    raise HomeAssistantError("Received invalid message format from Venice AI")
+
                 text_content = message.get("content", "")
                 tool_calls = message.get("tool_calls", [])
 
