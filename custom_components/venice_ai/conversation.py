@@ -4,37 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Literal
-
-# Try importing voluptuous_openapi for schema conversion, handle if not available
-try:
-    from voluptuous_openapi import convert as voluptuous_convert
-    HAS_VOLUPTUOUS_OPENAPI = True
-except ImportError:
-    HAS_VOLUPTUOUS_OPENAPI = False
-
-# Import client exceptions and client itself
-from .client import AsyncVeniceAIClient, VeniceAIError
-# Import constants for default values and keys
-from .const import (
-    CONF_CHAT_MODEL,
-    CONF_MAX_TOKENS,
-    CONF_MAX_TOOL_ITERATIONS,
-    CONF_PROMPT,
-    CONF_TEMPERATURE,
-    CONF_TOP_P,
-    CONF_STRIP_THINKING_RESPONSE,
-    CONF_DISABLE_THINKING,
-    DOMAIN,
-    MAX_CHAT_LOG_LENGTH,
-    RECOMMENDED_CHAT_MODEL,
-    RECOMMENDED_MAX_TOKENS,
-    RECOMMENDED_MAX_TOOL_ITERATIONS,
-    RECOMMENDED_TEMPERATURE,
-    RECOMMENDED_TOP_P,
-)
-
-_LOGGER = logging.getLogger(__name__)
+from typing import Any
 
 from homeassistant.components.conversation import (
     ConversationEntity,
@@ -56,6 +26,29 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
 
+from .client import AsyncVeniceAIClient, VeniceAIError
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_MAX_TOKENS,
+    CONF_MAX_TOOL_ITERATIONS,
+    CONF_PROMPT,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
+    CONF_STRIP_THINKING_RESPONSE,
+    DOMAIN,
+    HAS_VOLUPTUOUS_OPENAPI,
+    MAX_CHAT_LOG_LENGTH,
+    RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_MAX_TOOL_ITERATIONS,
+    RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_TOP_P,
+)
+
+if HAS_VOLUPTUOUS_OPENAPI:
+    from voluptuous_openapi import convert as voluptuous_convert  # type: ignore[import-untyped]
+
+_LOGGER = logging.getLogger(__name__)
 
 # Default system prompt for Venice AI
 DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant controlling a smart home. You can control lights, switches, climate, media players, and other devices. Always be concise and helpful."""
@@ -80,10 +73,19 @@ def _convert_schema_to_hashable(obj: Any) -> Any:
 
 
 def _format_venice_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
-    """Convert a voluptuous dict schema into a Venice-compatible OpenAPI-like schema."""
-    schema = {}
+    """Convert a schema dict into a Venice-compatible OpenAPI-like schema.
+
+    Recursively traverses the schema, preserving nested dict/list structures
+    and selector metadata (e.g., SelectSelector options become JSON Schema
+    ``enum`` values) while mapping Python types to JSON Schema types.
+    """
+    schema: dict[str, Any] = {}
     for key, val in raw_schema.items():
-        if val is str:
+        # Unwrap voluptuous Required/Optional wrappers
+        if hasattr(val, "schema"):
+            val = val.schema
+
+        if val is str or val is Any:
             schema[key] = {"type": "string"}
         elif val is int:
             schema[key] = {"type": "integer"}
@@ -91,6 +93,25 @@ def _format_venice_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
             schema[key] = {"type": "number"}
         elif val is bool:
             schema[key] = {"type": "boolean"}
+        elif isinstance(val, selector.SelectSelector):
+            config = getattr(val, "config", None)
+            options = getattr(config, "options", None) if config else None
+            if options:
+                schema[key] = {"type": "string", "enum": list(options)}
+                _LOGGER.debug(
+                    "_format_venice_schema: preserved SelectSelector with %d options for key %s",
+                    len(options),
+                    key,
+                )
+            else:
+                schema[key] = {"type": "string"}
+        elif isinstance(val, selector.Selector):
+            _LOGGER.debug(
+                "_format_venice_schema: converting selector %s to string for key %s",
+                val.__class__.__name__,
+                key,
+            )
+            schema[key] = {"type": "string"}
         elif isinstance(val, dict):
             schema[key] = {"type": "object", "properties": _format_venice_schema(val)}
         elif isinstance(val, list):
@@ -98,8 +119,6 @@ def _format_venice_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
                 "type": "array",
                 "items": _format_venice_schema({"__item__": val[0]}).get("__item__", {}),
             }
-        elif val is Any:
-            schema[key] = {"type": "string"}
         else:
             _LOGGER.debug(
                 "_format_venice_schema: unsupported type %s for key %s, defaulting to string",
@@ -118,13 +137,11 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
     if HAS_VOLUPTUOUS_OPENAPI:
         try:
             hashable = _convert_schema_to_hashable(tool.parameters)
-            # Use voluptuous_openapi to convert
             parameters_schema = voluptuous_convert(hashable)
             # voluptuous_openapi may return list for 'anyOf' patterns; simplify
             if isinstance(parameters_schema, list):
                 parameters_schema = parameters_schema[0]
             if isinstance(parameters_schema, dict) and "properties" in parameters_schema:
-                # Recursively ensure all sub-schemas have a type
                 def _ensure_types(sub_schema: dict[str, Any]) -> None:
                     if "properties" in sub_schema:
                         for _, prop in sub_schema["properties"].items():
@@ -141,7 +158,6 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
                 _ensure_types(parameters_schema)
                 return parameters_schema
             elif isinstance(parameters_schema, dict):
-                # Wrap simple dict in properties
                 return {"type": "object", "properties": parameters_schema}
             else:
                 _LOGGER.warning(
@@ -171,7 +187,6 @@ def _convert_chat_log_to_venice_messages(
         if isinstance(msg, UserContent):
             messages.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AssistantContent):
-            # Handle thinking tags if needed
             content = msg.content
             if strip_thinking and "<think>" in content:
                 parts = content.split("</think>")
@@ -179,7 +194,6 @@ def _convert_chat_log_to_venice_messages(
                     content = parts[-1].strip()
             messages.append({"role": "assistant", "content": content})
         elif isinstance(msg, ToolResultContent):
-            # Venice expects tool results as function results
             messages.append({
                 "role": "tool",
                 "tool_call_id": msg.tool_call_id,
@@ -203,7 +217,6 @@ def _trim_chat_log(chat_log: ChatLog) -> None:
     if len(content) <= MAX_CHAT_LOG_LENGTH:
         return
 
-    # Always keep the first message (initial user prompt)
     keep_first = [content[0]]
     tail = content[-(MAX_CHAT_LOG_LENGTH - 1):]
     trimmed = keep_first + tail
@@ -226,7 +239,7 @@ class VeniceAIConversationEntity(ConversationEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
-            model="Venice AI Conversation",
+            model="Conversation",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
 
@@ -250,7 +263,6 @@ class VeniceAIConversationEntity(ConversationEntity):
         temperature = options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
         top_p = options.get(CONF_TOP_P, RECOMMENDED_TOP_P)
         strip_thinking = options.get(CONF_STRIP_THINKING_RESPONSE, False)
-        disable_thinking = options.get(CONF_DISABLE_THINKING, False)
         prompt_template_str = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
         llm_api = options.get(CONF_LLM_HASS_API)
 
@@ -313,15 +325,13 @@ class VeniceAIConversationEntity(ConversationEntity):
                     raise HomeAssistantError("Message list is empty before sending to API.")
 
                 response_data = await self._client.chat.completions.create_non_streaming(
-                    {
-                        "model": model,
-                        "messages": messages,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                        "top_p": top_p,
-                        "tools": venice_tools if venice_tools else None,
-                        "stream": False,
-                    }
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    tools=venice_tools if venice_tools else None,
+                    stream=False,
                 )
                 if not isinstance(response_data, dict):
                     _LOGGER.error(
@@ -462,6 +472,7 @@ class VeniceAIConversationEntity(ConversationEntity):
     def _async_entry_updated(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Handle options update."""
         self.entry = entry
+        self._client = entry.runtime_data.client
 
 
 async def async_setup_entry(

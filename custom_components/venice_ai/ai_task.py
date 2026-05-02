@@ -84,7 +84,7 @@ else:
                 identifiers={(DOMAIN, entry.entry_id)},
                 name=entry.title,
                 manufacturer="Venice AI",
-                model="Venice AI Task",
+                model="AI Task",
                 entry_type=dr.DeviceEntryType.SERVICE,
             )
             self._client: AsyncVeniceAIClient = entry.runtime_data.client

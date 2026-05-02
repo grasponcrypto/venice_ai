@@ -2,6 +2,13 @@
 
 DOMAIN = "venice_ai"
 
+# Centralized voluptuous_openapi detection
+try:
+    from voluptuous_openapi import convert as voluptuous_convert  # noqa: F401
+    HAS_VOLUPTUOUS_OPENAPI = True
+except ImportError:
+    HAS_VOLUPTUOUS_OPENAPI = False
+
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
 RECOMMENDED_CHAT_MODEL = "llama-3.3-70b"  # Venice AI default model with function calling support
@@ -14,7 +21,6 @@ RECOMMENDED_TEMPERATURE = 1.0
 
 # Venice AI reasoning model options
 CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
-CONF_DISABLE_THINKING = "disable_thinking"
 
 # Venice AI TTS options
 CONF_TTS_MODEL = "tts_model"

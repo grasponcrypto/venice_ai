@@ -36,7 +36,6 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
-    CONF_DISABLE_THINKING,
     CONF_TTS_MODEL,
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
@@ -198,78 +197,69 @@ class VeniceAIOptionsFlow(OptionsFlow):
         self.config_entry = config_entry
         self._client: AsyncVeniceAIClient | None = None
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Manage the options."""
+    async def _fetch_model_options(
+        self,
+    ) -> tuple[list[SelectOptionDict], list[SelectOptionDict], list[SelectOptionDict], dict[str, str]]:
+        """Fetch available models from Venice AI and return options + errors.
+
+        Returns:
+            (chat_models, tts_models, stt_models, errors)
+        """
+        chat_options: list[SelectOptionDict] = []
+        tts_options: list[SelectOptionDict] = []
+        stt_options: list[SelectOptionDict] = []
         errors: dict[str, str] = {}
 
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
-        # Build schema with current values as defaults
-        options = self.config_entry.options
-
-        # Fetch available models for the selector
-        models_options: list[SelectOptionDict] = []
-        tts_models_options: list[SelectOptionDict] = []
-        stt_models_options: list[SelectOptionDict] = []
+        api_key = self.config_entry.data.get(CONF_API_KEY)
+        if not api_key:
+            _LOGGER.warning("No API key found in config entry for options flow")
+            errors["base"] = "missing_api_key"
+            return chat_options, tts_options, stt_options, errors
 
         try:
-            api_key = self.config_entry.data.get(CONF_API_KEY)
-            if api_key:
-                self._client = AsyncVeniceAIClient(
-                    api_key=api_key,
-                )
+            self._client = AsyncVeniceAIClient(api_key=api_key)
+
+            _LOGGER.debug("Fetching text models for options flow")
+            text_resp = await self._client.models.list(model_type="text")
+            if isinstance(text_resp, list):
+                fetched = [
+                    SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                    for m in text_resp
+                    if m.get("id")
+                ]
+                if fetched:
+                    chat_options = fetched
+                    _LOGGER.debug("Found %d text models", len(fetched))
+                else:
+                    _LOGGER.warning("No text models found")
             else:
-                _LOGGER.warning("No API key found in config entry for options flow")
-                errors["base"] = "missing_api_key"
+                _LOGGER.error(
+                    "Invalid text models response: expected list, got %s",
+                    type(text_resp).__name__,
+                )
 
-            if self._client is not None:
-                _LOGGER.debug("Fetching text models for options flow")
-                models_response = await self._client.models.list(model_type="text")
-                if isinstance(models_response, list):
-                    fetched_models = [
-                        SelectOptionDict(label=model.get("id", "Unknown"), value=model.get("id", ""))
-                        for model in models_response
-                        if model.get("id")
-                    ]
-                    if fetched_models:
-                        models_options = fetched_models
-                        _LOGGER.debug("Found %d text models with function calling support", len(fetched_models))
-                    else:
-                        _LOGGER.warning("No text models with function calling support found")
-                else:
-                    _LOGGER.error("Invalid text models response structure: expected list, got %s", type(models_response))
-
-                # Fetch audio models for TTS and STT
-                _LOGGER.debug("Fetching audio models for TTS/STT options flow")
-                audio_models_response = await self._client.models.list(model_type="audio")
-                if isinstance(audio_models_response, list):
-                    tts_models = [m for m in audio_models_response if m.get("id", "").startswith("tts-")]
-                    stt_models = [m for m in audio_models_response if m.get("id", "").startswith("stt-") or "parakeet" in m.get("id", "")]
-
-                    fetched_tts_models = [
-                        SelectOptionDict(label=model.get("id", "Unknown"), value=model.get("id", ""))
-                        for model in tts_models
-                        if model.get("id")
-                    ]
-                    fetched_stt_models = [
-                        SelectOptionDict(label=model.get("id", "Unknown"), value=model.get("id", ""))
-                        for model in stt_models
-                        if model.get("id")
-                    ]
-
-                    if fetched_tts_models:
-                        tts_models_options = fetched_tts_models
-                        _LOGGER.debug("Found %d TTS models", len(fetched_tts_models))
-
-                    if fetched_stt_models:
-                        stt_models_options = fetched_stt_models
-                        _LOGGER.debug("Found %d STT models", len(fetched_stt_models))
-
-                else:
-                    _LOGGER.debug("No audio models returned or invalid response structure")
+            _LOGGER.debug("Fetching audio models for options flow")
+            audio_resp = await self._client.models.list(model_type="audio")
+            if isinstance(audio_resp, list):
+                tts_raw = [m for m in audio_resp if m.get("id", "").startswith("tts-")]
+                stt_raw = [
+                    m
+                    for m in audio_resp
+                    if m.get("id", "").startswith("stt-") or "parakeet" in m.get("id", "")
+                ]
+                tts_options = [
+                    SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                    for m in tts_raw
+                    if m.get("id")
+                ]
+                stt_options = [
+                    SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                    for m in stt_raw
+                    if m.get("id")
+                ]
+                _LOGGER.debug("Found %d TTS / %d STT models", len(tts_options), len(stt_options))
+            else:
+                _LOGGER.debug("No audio models returned or invalid response")
 
         except AuthenticationError:
             _LOGGER.error("Authentication error fetching models for options flow")
@@ -280,20 +270,36 @@ class VeniceAIOptionsFlow(OptionsFlow):
         except Exception:
             _LOGGER.exception("Unexpected error fetching models for options flow")
             errors["base"] = "unknown"
-        else:
-            if not models_options:
-                _LOGGER.warning("Venice AI client not available in options flow for entry %s. Using default model only.", self.config_entry.entry_id)
-                models_options = [SelectOptionDict(label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL)]
-            if not tts_models_options:
-                tts_models_options = [SelectOptionDict(label=RECOMMENDED_TTS_MODEL, value=RECOMMENDED_TTS_MODEL)]
-            if not stt_models_options:
-                stt_models_options = [SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)]
         finally:
             if self._client is not None:
                 await self._client.close()
                 self._client = None
 
-        options_schema = vol.Schema(
+        # Fallback to defaults when nothing was fetched
+        if not chat_options:
+            chat_options = [
+                SelectOptionDict(label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL)
+            ]
+        if not tts_options:
+            tts_options = [
+                SelectOptionDict(label=RECOMMENDED_TTS_MODEL, value=RECOMMENDED_TTS_MODEL)
+            ]
+        if not stt_options:
+            stt_options = [
+                SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)
+            ]
+
+        return chat_options, tts_options, stt_options, errors
+
+    def _build_options_schema(
+        self,
+        models_options: list[SelectOptionDict],
+        tts_models_options: list[SelectOptionDict],
+        stt_models_options: list[SelectOptionDict],
+    ) -> vol.Schema:
+        """Build the voluptuous options schema from fetched model lists."""
+        options = self.config_entry.options
+        return vol.Schema(
             {
                 vol.Optional(
                     CONF_PROMPT,
@@ -333,10 +339,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_STRIP_THINKING_RESPONSE,
                     description={"suggested_value": options.get(CONF_STRIP_THINKING_RESPONSE, False)},
-                ): BooleanSelector(),
-                vol.Optional(
-                    CONF_DISABLE_THINKING,
-                    description={"suggested_value": options.get(CONF_DISABLE_THINKING, False)},
                 ): BooleanSelector(),
                 vol.Optional(
                     CONF_MAX_TOOL_ITERATIONS,
@@ -417,10 +419,20 @@ class VeniceAIOptionsFlow(OptionsFlow):
             }
         )
 
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        models, tts_models, stt_models, errors = await self._fetch_model_options()
+        options_schema = self._build_options_schema(models, tts_models, stt_models)
+
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                options_schema, options
+                options_schema, self.config_entry.options
             ),
             errors=errors,
         )

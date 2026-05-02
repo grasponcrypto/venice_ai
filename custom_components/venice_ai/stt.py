@@ -99,7 +99,7 @@ class VeniceAISTT(SpeechToTextEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
-            model="Venice AI STT",
+            model="STT",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
 
@@ -147,36 +147,20 @@ class VeniceAISTT(SpeechToTextEntity):
         for transcriptions.
         """
         # Validate metadata against declared supported formats
-        if metadata.format not in self.supported_formats:
-            _LOGGER.error(
-                "Unsupported audio format: %s. Only %s is supported.",
-                metadata.format, self.supported_formats,
-            )
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-        if metadata.codec not in self.supported_codecs:
-            _LOGGER.error(
-                "Unsupported audio codec: %s. Only %s is supported.",
-                metadata.codec, self.supported_codecs,
-            )
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-        if metadata.bit_rate not in self.supported_bit_rates:
-            _LOGGER.error(
-                "Unsupported bit rate: %s. Only %s is supported.",
-                metadata.bit_rate, self.supported_bit_rates,
-            )
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-        if metadata.sample_rate not in self.supported_sample_rates:
-            _LOGGER.error(
-                "Unsupported sample rate: %s. Only %s is supported.",
-                metadata.sample_rate, self.supported_sample_rates,
-            )
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-        if metadata.channel not in self.supported_channels:
-            _LOGGER.error(
-                "Unsupported channel count: %s. Only %s is supported.",
-                metadata.channel, self.supported_channels,
-            )
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+        _VALIDATION_ATTRS = [
+            ("format", self.supported_formats, "audio format"),
+            ("codec", self.supported_codecs, "audio codec"),
+            ("bit_rate", self.supported_bit_rates, "bit rate"),
+            ("sample_rate", self.supported_sample_rates, "sample rate"),
+            ("channel", self.supported_channels, "channel count"),
+        ]
+        for attr, supported, label in _VALIDATION_ATTRS:
+            if getattr(metadata, attr) not in supported:
+                _LOGGER.error(
+                    "Unsupported %s: %s. Only %s is supported.",
+                    label, getattr(metadata, attr), supported,
+                )
+                return stt.SpeechResult("", stt.SpeechResultState.ERROR)
 
         try:
             # Read all data from the stream using bytearray for efficiency

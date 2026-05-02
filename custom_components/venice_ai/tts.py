@@ -62,7 +62,7 @@ class VeniceAITTS(TextToSpeechEntity):
             identifiers={(DOMAIN, config_entry.entry_id)},
             name=config_entry.title,
             manufacturer="Venice AI",
-            model="Venice AI TTS",
+            model="TTS",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
 

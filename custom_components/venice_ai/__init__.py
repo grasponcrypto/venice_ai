@@ -35,16 +35,10 @@ except ImportError:
     _HAS_AI_TASK = False
 
 from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
-from .const import DOMAIN
+from .const import DOMAIN, HAS_VOLUPTUOUS_OPENAPI
 from .coordinator import VeniceAIDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-
-try:
-    from voluptuous_openapi import convert as _voluptuous_convert  # noqa: F401
-    _HAS_VOLUPTUOUS_OPENAPI = True
-except ImportError:
-    _HAS_VOLUPTUOUS_OPENAPI = False
 
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_AI_TASK = "ai_task"
@@ -73,7 +67,7 @@ class VeniceAIConfigEntry(ConfigEntry):
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Venice AI Conversation."""
-    if not _HAS_VOLUPTUOUS_OPENAPI:
+    if not HAS_VOLUPTUOUS_OPENAPI:
         _LOGGER.debug(
             "voluptuous-openapi is not installed. LLM tool schema conversion "
             "will be limited. Install with: pip install voluptuous-openapi"
@@ -207,6 +201,26 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Set up the repairs platform for a config entry."""
+    try:
+        from .repairs import async_setup_entry as async_setup_repairs_entry
+
+        await async_setup_repairs_entry(hass, entry)
+    except Exception:
+        _LOGGER.debug("Repairs setup failed (likely unsupported HA version)")
+
+
+async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Unload the repairs platform for a config entry."""
+    try:
+        from .repairs import async_unload_entry as async_unload_repairs_entry
+
+        await async_unload_repairs_entry(hass, entry)
+    except Exception:
+        _LOGGER.debug("Repairs unload failed")
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
     """Set up Venice AI Conversation from a config entry."""
     client = AsyncVeniceAIClient(
@@ -232,6 +246,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info("Successfully forwarded entry setups")
+
+    await async_setup_repairs(hass, entry)
     return True
 
 
@@ -252,4 +268,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runtime_data: VeniceAIRuntimeData = entry.runtime_data
     if isinstance(runtime_data.client, AsyncVeniceAIClient):
         await runtime_data.client.close()
+
+    await async_unload_repairs(hass, entry)
     return unload_ok

@@ -117,7 +117,7 @@ class ChatCompletions:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Create a non-streaming chat completion."""
-        payload["stream"] = False
+        payload = {**payload, "stream": False}
 
         try:
             response = await self.client._async_request_with_retry(
