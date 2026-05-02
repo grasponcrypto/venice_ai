@@ -64,15 +64,15 @@ DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant controlling a smart ho
 MAX_TOOL_ITERATIONS = 5
 
 
-def _make_schema_hashable(obj: Any) -> Any:
+def _convert_schema_to_hashable(obj: Any) -> Any:
     """Recursively convert a voluptuous schema into a hashable representation."""
     if isinstance(obj, dict):
-        return frozenset((k, _make_schema_hashable(v)) for k, v in obj.items())
+        return frozenset((k, _convert_schema_to_hashable(v)) for k, v in obj.items())
     if isinstance(obj, list):
-        return tuple(_make_schema_hashable(v) for v in obj)
+        return tuple(_convert_schema_to_hashable(v) for v in obj)
     if isinstance(obj, selector.Selector):
         _LOGGER.debug(
-            "_make_schema_hashable: replacing selector %s with str",
+            "_convert_schema_to_hashable: replacing selector %s with str",
             obj.__class__.__name__,
         )
         return str
@@ -117,7 +117,7 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
 
     if HAS_VOLUPTUOUS_OPENAPI:
         try:
-            hashable = _make_schema_hashable(tool.parameters)
+            hashable = _convert_schema_to_hashable(tool.parameters)
             # Use voluptuous_openapi to convert
             parameters_schema = voluptuous_convert(hashable)
             # voluptuous_openapi may return list for 'anyOf' patterns; simplify
@@ -153,7 +153,7 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
             _LOGGER.error("Failed to convert schema: %s", e, exc_info=True)
             return {"type": "object", "properties": {}}
     else:
-        _LOGGER.warning("Cannot perform detailed schema conversion without voluptuous_openapi.")
+        _LOGGER.debug("Cannot perform detailed schema conversion without voluptuous_openapi.")
         return {"type": "object", "properties": {}}
 
 
@@ -302,6 +302,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         max_tool_iterations = options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
 
         try:
+            _trim_chat_log(chat_log)
             for iteration in range(max_tool_iterations):
                 messages = _convert_chat_log_to_venice_messages(
                     chat_log, system_prompt, strip_thinking=strip_thinking
@@ -328,12 +329,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                         type(response_data).__name__,
                     )
                     raise HomeAssistantError(
-                        f"Received invalid response type from Venice AI: {type(response_data).__name__}"
+                        f"Received invalid response type: {type(response_data).__name__}"
                     )
 
                 if not response_data.get("choices"):
                     _LOGGER.error("Invalid response from Venice AI: %s", response_data)
-                    raise HomeAssistantError("Received invalid response from Venice AI")
+                    raise HomeAssistantError("Received invalid response")
 
                 choice = response_data["choices"][0]
                 if not isinstance(choice, dict):
@@ -341,7 +342,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                         "Invalid choice type in Venice AI response: %s",
                         type(choice).__name__,
                     )
-                    raise HomeAssistantError("Received invalid choice format from Venice AI")
+                    raise HomeAssistantError("Received invalid choice format")
 
                 message = choice.get("message", {})
                 if not isinstance(message, dict):
@@ -349,7 +350,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                         "Invalid message type in Venice AI response: %s",
                         type(message).__name__,
                     )
-                    raise HomeAssistantError("Received invalid message format from Venice AI")
+                    raise HomeAssistantError("Received invalid message format")
 
                 text_content = message.get("content", "")
                 tool_calls = message.get("tool_calls", [])

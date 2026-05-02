@@ -118,7 +118,6 @@ class ChatCompletions:
     ) -> dict[str, Any]:
         """Create a non-streaming chat completion."""
         payload["stream"] = False
-        response_text = None
 
         try:
             response = await self.client._async_request_with_retry(
@@ -128,12 +127,11 @@ class ChatCompletions:
                 json=payload,
                 timeout=120.0,
             )
-            response_text = response.text
             response.raise_for_status()
             return response.json()
 
         except httpx.HTTPStatusError as err:
-            error_detail = response_text if response_text is not None else getattr(err.response, "text", str(err))
+            error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key") from err
@@ -154,8 +152,8 @@ class ChatCompletions:
             raise VeniceAIError(f"Request error: {err}") from err
 
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode non-streaming JSON response: %s", response_text)
-            raise VeniceAIError(f"Failed to decode API response: {response_text}") from err
+            _LOGGER.error("Failed to decode non-streaming JSON response: %s", response.text)
+            raise VeniceAIError(f"Failed to decode API response: {response.text}") from err
 
 
 class Models:
@@ -179,7 +177,6 @@ class Models:
                 return models
             _LOGGER.debug("Cache expired for %s models, fetching fresh", model_type)
 
-        response_text = None
         url = f"{self.client._base_url}/models"
         _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
         try:
@@ -189,7 +186,6 @@ class Models:
                 headers=self.client._headers,
                 params={"type": model_type},
             )
-            response_text = response.text
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
@@ -197,7 +193,7 @@ class Models:
             _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:
-            error_detail = response_text if response_text is not None else getattr(err.response, "text", str(err))
+            error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Models API HTTP error %s: %s", err.response.status_code, error_detail)
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key checking models") from err
@@ -206,7 +202,7 @@ class Models:
             _LOGGER.error("Venice AI Models API request error: %s (URL: %s, type: %s)", err, url, type(err).__name__)
             raise VeniceAIError(f"Request error fetching models: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode models JSON response: %s", response_text)
+            _LOGGER.error("Failed to decode models JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode models API response") from err
 
 
@@ -219,20 +215,18 @@ class Voices:
 
     async def list(self) -> list[dict]:
         """List available voices."""
-        response_text = None
         try:
             response = await self.client._async_request_with_retry(
                 "GET",
                 "/audio/voices",
                 headers=self.client._headers,
             )
-            response_text = response.text
             response.raise_for_status()
             voice_data = response.json()
             voices = voice_data.get("data", [])
             return voices
         except httpx.HTTPStatusError as err:
-            error_detail = response_text if response_text is not None else getattr(err.response, "text", str(err))
+            error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Voices API HTTP error %s: %s", err.response.status_code, error_detail)
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key for voices") from err
@@ -241,7 +235,7 @@ class Voices:
             _LOGGER.error("Venice AI Voices API request error: %s", err)
             raise VeniceAIError(f"Request error fetching voices: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode voices JSON response: %s", response_text)
+            _LOGGER.error("Failed to decode voices JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode voices API response") from err
 
 
@@ -387,7 +381,6 @@ class Transcriptions:
             "Authorization": f"Bearer {self.client._api_key}",
         }
 
-        response_text = None
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
@@ -397,15 +390,14 @@ class Transcriptions:
                 data=data,
                 timeout=60.0,
             )
-            response_text = response.text
             response.raise_for_status()
             if response_format == "json":
                 return response.json()
             else:
-                return {"text": response_text}
+                return {"text": response.text}
 
         except httpx.HTTPStatusError as err:
-            error_detail = response_text if response_text is not None else getattr(err.response, "text", str(err))
+            error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Transcriptions API HTTP error %s: %s", err.response.status_code, error_detail)
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key for transcriptions") from err
@@ -414,7 +406,7 @@ class Transcriptions:
             _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
             raise VeniceAIError(f"Request error creating transcription: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode transcriptions JSON response: %s", response_text)
+            _LOGGER.error("Failed to decode transcriptions JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode transcriptions API response") from err
 
 
@@ -446,7 +438,6 @@ class Images:
             "n": n,
         }
 
-        response_text = None
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
@@ -455,12 +446,11 @@ class Images:
                 json=payload,
                 timeout=120.0,
             )
-            response_text = response.text
             response.raise_for_status()
             return response.json()
 
         except httpx.HTTPStatusError as err:
-            error_detail = response_text if response_text is not None else getattr(err.response, "text", str(err))
+            error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Images API HTTP error %s: %s", err.response.status_code, error_detail)
             if err.response.status_code == 401:
                 raise AuthenticationError("Invalid API key for image generation") from err
@@ -469,7 +459,7 @@ class Images:
             _LOGGER.error("Venice AI Images API request error: %s", err)
             raise VeniceAIError(f"Request error generating image: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode images JSON response: %s", response_text)
+            _LOGGER.error("Failed to decode images JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode images API response") from err
 
 

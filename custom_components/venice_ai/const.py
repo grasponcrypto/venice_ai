@@ -2,7 +2,6 @@
 
 DOMAIN = "venice_ai"
 
-CONF_RECOMMENDED = "recommended"
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
 RECOMMENDED_CHAT_MODEL = "llama-3.3-70b"  # Venice AI default model with function calling support
@@ -40,9 +39,6 @@ VENICE_TTS_VOICES = [
     "jf_nezumi", "jf_tebukuro", "jm_kumo", "pf_dora", "pm_alex", "pm_santa",
     "ef_dora", "em_alex", "em_santa",
 ]
-
-# Venice AI doesn't have unsupported models list currently
-UNSUPPORTED_MODELS = []
 
 # Venice AI STT options
 CONF_STT_MODEL = "stt_model"
