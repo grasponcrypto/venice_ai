@@ -227,10 +227,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
         coordinator=coordinator,
     )
 
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info("Successfully forwarded entry setups")
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload Venice AI when options change."""
+    _LOGGER.info("Reloading Venice AI entry %s due to options update", entry.entry_id)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

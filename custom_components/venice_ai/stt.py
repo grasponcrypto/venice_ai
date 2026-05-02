@@ -26,6 +26,7 @@ from .const import (
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
 )
+from .client import AsyncVeniceAIClient, VeniceAIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -145,8 +146,6 @@ class VeniceAISTT(SpeechToTextEntity):
         Venice AI does not currently support chunked streaming uploads
         for transcriptions.
         """
-        from .client import AsyncVeniceAIClient, VeniceAIError
-
         # Validate metadata against declared supported formats
         if metadata.format not in self.supported_formats:
             _LOGGER.error(

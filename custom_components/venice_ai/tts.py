@@ -143,17 +143,31 @@ class VeniceAITTS(TextToSpeechEntity):
     async def async_stream_tts_audio(
         self, request: TTSAudioRequest
     ) -> TTSAudioResponse:
-        """Stream audio using a single generated chunk."""
+        """Stream audio using Venice AI's streaming TTS API."""
         message = "".join([chunk async for chunk in request.message_gen])
         options = dict(request.options or {})
 
-        audio_format, audio_data = await self.async_get_tts_audio(
-            message, request.language, options
+        voice = options.get(ATTR_VOICE, RECOMMENDED_TTS_VOICE)
+        model = options.get("tts_model", RECOMMENDED_TTS_MODEL)
+        response_format = options.get(ATTR_AUDIO_OUTPUT, RECOMMENDED_TTS_RESPONSE_FORMAT)
+        speed = options.get("tts_speed", RECOMMENDED_TTS_SPEED)
+
+        _LOGGER.debug("Streaming TTS for message: %s", message)
+        _LOGGER.debug(
+            "Streaming TTS options: voice=%s, model=%s, format=%s, speed=%s",
+            voice, model, response_format, speed
         )
-        if not audio_data or not audio_format:
-            raise HomeAssistantError(f"No TTS from {self.entity_id} for '{message}'")
 
-        async def gen() -> AsyncGenerator[bytes, None]:
-            yield audio_data
+        if not message:
+            raise HomeAssistantError(f"No TTS message for {self.entity_id}")
 
-        return TTSAudioResponse(audio_format, gen())
+        return TTSAudioResponse(
+            response_format,
+            self._client.speech.generate_streaming(
+                text=message,
+                voice=voice,
+                model=model,
+                audio_output=response_format,
+                speed=speed,
+            )
+        )

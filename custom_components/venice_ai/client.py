@@ -259,16 +259,14 @@ class Speech:
         model: str = "tts-kokoro",
         audio_output: str = "mp3",
         speed: float = 1.0,
-        streaming: bool = False,
     ) -> bytes:
-        """Generate speech audio from text."""
+        """Generate speech audio from text (non-streaming)."""
         data = {
             "input": text,
             "model": model,
             "voice": voice,
             "response_format": audio_output,
             "speed": speed,
-            "streaming": streaming,
         }
 
         audio_headers = {
@@ -287,6 +285,60 @@ class Speech:
             audio_data = response.content
             _LOGGER.debug("Received raw audio data: %d bytes", len(audio_data))
             return audio_data
+
+        except httpx.HTTPStatusError as err:
+            error_detail = "Unknown error"
+            try:
+                if err.response.headers.get("content-type", "").startswith("audio/"):
+                    error_detail = f"HTTP {err.response.status_code} for audio request"
+                else:
+                    error_detail = err.response.text[:500]
+            except Exception:
+                error_detail = f"HTTP {err.response.status_code}"
+
+            _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
+            if err.response.status_code == 401:
+                raise AuthenticationError("Invalid API key for speech") from err
+            raise VeniceAIError(f"HTTP error generating speech {err.response.status_code}: {error_detail}") from err
+        except httpx.RequestError as err:
+            _LOGGER.error("Venice AI Speech API request error: %s", err)
+            raise VeniceAIError(f"Request error generating speech: {err}") from err
+
+    async def generate_streaming(
+        self,
+        text: str,
+        voice: str = "bm_daniel",
+        model: str = "tts-kokoro",
+        audio_output: str = "mp3",
+        speed: float = 1.0,
+    ) -> AsyncGenerator[bytes, None]:
+        """Generate speech audio from text with streaming chunks."""
+        data = {
+            "input": text,
+            "model": model,
+            "voice": voice,
+            "response_format": audio_output,
+            "speed": speed,
+            "streaming": True,
+        }
+
+        audio_headers = {
+            "Authorization": f"Bearer {self.client._api_key}",
+        }
+
+        try:
+            response = await self.client._async_request_with_retry(
+                "POST",
+                "/audio/speech",
+                headers=audio_headers,
+                json=data,
+                timeout=60.0,
+            )
+            response.raise_for_status()
+
+            _LOGGER.debug("Streaming TTS response received, yielding chunks")
+            async for chunk in response.aiter_bytes():
+                yield chunk
 
         except httpx.HTTPStatusError as err:
             error_detail = "Unknown error"

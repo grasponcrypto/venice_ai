@@ -13,7 +13,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import AsyncVeniceAIClient, VeniceAIError
-from .const import CONF_CHAT_MODEL, DOMAIN, RECOMMENDED_CHAT_MODEL
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_MAX_TOKENS,
+    CONF_TEMPERATURE,
+    DOMAIN,
+    RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_TEMPERATURE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -117,13 +125,17 @@ else:
             # Use the configured chat model from options
             model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
 
+            # Use configured options from config entry instead of hardcoded values
+            max_tokens = self.entry.options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
+            temperature = self.entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
+
             try:
                 response_data = await self._client.chat.create_non_streaming(
                     {
                         "model": model,
                         "messages": messages,
-                        "max_tokens": 1000,
-                        "temperature": 0.7,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
                         "stream": False,
                     }
                 )

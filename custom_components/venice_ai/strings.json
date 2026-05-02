@@ -49,18 +49,44 @@
         "name": "Generate Image",
         "description": "Generate an image using Venice AI.",
         "fields": {
-          "prompt": "Image description",
-          "size": "Image size",
-          "quality": "Image quality",
-          "style": "Image style"
+          "config_entry": {
+            "name": "Config Entry",
+            "description": "The Venice AI config entry to use for this service call."
+          },
+          "prompt": {
+            "name": "Prompt",
+            "description": "Image description"
+          },
+          "size": {
+            "name": "Size",
+            "description": "Image size"
+          },
+          "quality": {
+            "name": "Quality",
+            "description": "Image quality"
+          },
+          "style": {
+            "name": "Style",
+            "description": "Image style"
+          }
         }
       },
       "ai_task": {
         "name": "VeniceAI AI Task",
-        "description": "AI task",
+        "description": "Generate structured data using Venice AI.",
         "fields": {
-          "task": "Task description",
-          "structure": "Response structure"
+          "config_entry": {
+            "name": "Config Entry",
+            "description": "The Venice AI config entry to use for this service call."
+          },
+          "task": {
+            "name": "Task",
+            "description": "Task description"
+          },
+          "structure": {
+            "name": "Structure",
+            "description": "Expected response structure or schema"
+          }
         }
       },
       "conversation": {
