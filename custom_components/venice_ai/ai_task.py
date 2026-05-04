@@ -130,14 +130,12 @@ else:
             temperature = self.entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
 
             try:
-                response_data = await self._client.chat.create_non_streaming(
-                    {
-                        "model": model,
-                        "messages": messages,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                        "stream": False,
-                    }
+                response_data = await self._client.chat.completions.create_non_streaming(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=False,
                 )
 
                 if not response_data or not response_data.get("choices"):

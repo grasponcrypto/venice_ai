@@ -35,6 +35,10 @@ class ChatCompletions:
     def __init__(self, client: "AsyncVeniceAIClient") -> None:
         """Initialize chat completions."""
         self.client = client
+        # Allow both client.chat.create_non_streaming(...) and
+        # client.chat.completions.create_non_streaming(...) — the latter mirrors
+        # the OpenAI SDK's chat.completions namespace and is the preferred form.
+        self.completions = self
 
     @asynccontextmanager
     async def create(
@@ -114,9 +118,31 @@ class ChatCompletions:
 
     async def create_non_streaming(
         self,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
-        """Create a non-streaming chat completion."""
+        """Create a non-streaming chat completion.
+
+        Accepts either a pre-built payload dict (legacy positional form) or
+        keyword arguments matching the OpenAI chat-completions API parameters
+        (e.g. model=, messages=, max_tokens=, temperature=, top_p=, tools=).
+        Both calling conventions are equivalent:
+
+            # dict form (legacy):
+            await client.chat.completions.create_non_streaming(
+                {"model": "...", "messages": [...]}
+            )
+
+            # keyword form (preferred, mirrors OpenAI SDK):
+            await client.chat.completions.create_non_streaming(
+                model="...", messages=[...]
+            )
+        """
+        if payload is None:
+            payload = {}
+        # Merge keyword arguments; kwargs take precedence over dict keys.
+        if kwargs:
+            payload = {**payload, **kwargs}
         payload = {**payload, "stream": False}
 
         try:
