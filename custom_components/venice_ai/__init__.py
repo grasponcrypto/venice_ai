@@ -15,6 +15,7 @@ from homeassistant.core import (
     ServiceCall,
     ServiceResponse,
     SupportsResponse,
+    callback,
 )
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -202,11 +203,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Set up the repairs platform for a config entry."""
+    """Set up the repairs platform for a config entry.
+
+    Also registers a coordinator listener so that auth/API-availability repair
+    issues are created/cleared automatically on every coordinator refresh,
+    without any extra network calls (CRIT-2 fix).
+    """
     try:
-        from .repairs import async_setup_entry as async_setup_repairs_entry
+        from .repairs import (
+            async_setup_entry as async_setup_repairs_entry,
+            async_handle_coordinator_update,
+        )
 
         await async_setup_repairs_entry(hass, entry)
+
+        # Register coordinator listener — fires after every refresh cycle.
+        # The listener is a no-arg callback; we close over hass, entry, and
+        # the coordinator so repairs.async_handle_coordinator_update can inspect
+        # coordinator.last_exception without making its own network calls.
+        coordinator = entry.runtime_data.coordinator
+
+        @callback
+        def _on_coordinator_update() -> None:
+            async_handle_coordinator_update(hass, entry, coordinator)
+
+        entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
     except Exception:
         _LOGGER.debug("Repairs setup failed (likely unsupported HA version)")
 
