@@ -195,12 +195,19 @@ class VeniceAIOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         self.config_entry = config_entry
-        self._client: AsyncVeniceAIClient | None = None
 
     async def _fetch_model_options(
         self,
     ) -> tuple[list[SelectOptionDict], list[SelectOptionDict], list[SelectOptionDict], dict[str, str]]:
         """Fetch available models from Venice AI and return options + errors.
+
+        The client is scoped entirely within this method via ``async with`` so
+        that the underlying aiohttp session is guaranteed to be closed on both
+        the happy path and any exception or flow-cancellation path.  Storing
+        the client on ``self`` is intentionally avoided: config-flow objects can
+        be abandoned between steps, and a ``self._client`` reference that
+        survives past the ``finally`` block would leak the session if the flow
+        is garbage-collected before cleanup runs.
 
         Returns:
             (chat_models, tts_models, stt_models, errors)
@@ -217,49 +224,48 @@ class VeniceAIOptionsFlow(OptionsFlow):
             return chat_options, tts_options, stt_options, errors
 
         try:
-            self._client = AsyncVeniceAIClient(api_key=api_key)
-
-            _LOGGER.debug("Fetching text models for options flow")
-            text_resp = await self._client.models.list(model_type="text")
-            if isinstance(text_resp, list):
-                fetched = [
-                    SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
-                    for m in text_resp
-                    if m.get("id")
-                ]
-                if fetched:
-                    chat_options = fetched
-                    _LOGGER.debug("Found %d text models", len(fetched))
+            async with AsyncVeniceAIClient(api_key=api_key) as client:
+                _LOGGER.debug("Fetching text models for options flow")
+                text_resp = await client.models.list(model_type="text")
+                if isinstance(text_resp, list):
+                    fetched = [
+                        SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                        for m in text_resp
+                        if m.get("id")
+                    ]
+                    if fetched:
+                        chat_options = fetched
+                        _LOGGER.debug("Found %d text models", len(fetched))
+                    else:
+                        _LOGGER.warning("No text models found")
                 else:
-                    _LOGGER.warning("No text models found")
-            else:
-                _LOGGER.error(
-                    "Invalid text models response: expected list, got %s",
-                    type(text_resp).__name__,
-                )
+                    _LOGGER.error(
+                        "Invalid text models response: expected list, got %s",
+                        type(text_resp).__name__,
+                    )
 
-            _LOGGER.debug("Fetching audio models for options flow")
-            audio_resp = await self._client.models.list(model_type="audio")
-            if isinstance(audio_resp, list):
-                tts_raw = [m for m in audio_resp if m.get("id", "").startswith("tts-")]
-                stt_raw = [
-                    m
-                    for m in audio_resp
-                    if m.get("id", "").startswith("stt-") or "parakeet" in m.get("id", "")
-                ]
-                tts_options = [
-                    SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
-                    for m in tts_raw
-                    if m.get("id")
-                ]
-                stt_options = [
-                    SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
-                    for m in stt_raw
-                    if m.get("id")
-                ]
-                _LOGGER.debug("Found %d TTS / %d STT models", len(tts_options), len(stt_options))
-            else:
-                _LOGGER.debug("No audio models returned or invalid response")
+                _LOGGER.debug("Fetching audio models for options flow")
+                audio_resp = await client.models.list(model_type="audio")
+                if isinstance(audio_resp, list):
+                    tts_raw = [m for m in audio_resp if m.get("id", "").startswith("tts-")]
+                    stt_raw = [
+                        m
+                        for m in audio_resp
+                        if m.get("id", "").startswith("stt-") or "parakeet" in m.get("id", "")
+                    ]
+                    tts_options = [
+                        SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                        for m in tts_raw
+                        if m.get("id")
+                    ]
+                    stt_options = [
+                        SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                        for m in stt_raw
+                        if m.get("id")
+                    ]
+                    _LOGGER.debug("Found %d TTS / %d STT models", len(tts_options), len(stt_options))
+                else:
+                    _LOGGER.debug("No audio models returned or invalid response")
 
         except AuthenticationError:
             _LOGGER.error("Authentication error fetching models for options flow")
@@ -270,10 +276,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
         except Exception:
             _LOGGER.exception("Unexpected error fetching models for options flow")
             errors["base"] = "unknown"
-        finally:
-            if self._client is not None:
-                await self._client.close()
-                self._client = None
 
         # Fallback to defaults when nothing was fetched
         if not chat_options:
