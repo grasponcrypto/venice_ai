@@ -56,6 +56,9 @@ async def async_setup_entry(
         return
     entity = VeniceAITaskEntity(entry)
     _LOGGER.info("Created VeniceAITaskEntity: %s", entity.unique_id)
+    # Store entity reference in runtime_data so the service handler can find it
+    # without using hass.data (Architecture 7.1 fix)
+    runtime_data.ai_task_entity = entity
     async_add_entities([entity])
     _LOGGER.info("Added VeniceAITaskEntity to Home Assistant")
 

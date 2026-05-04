@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TypedDict
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -14,7 +14,15 @@ from .const import UPDATE_INTERVAL
 _LOGGER = logging.getLogger(__name__)
 
 
-class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class VeniceAICoordinatorData(TypedDict):
+    """Typed schema for Venice AI coordinator data (Architecture 7.2)."""
+
+    text_models: list[dict[str, Any]]
+    audio_models: list[dict[str, Any]]
+    voices: list[dict[str, Any]]
+
+
+class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorData]):
     """Coordinator to fetch and cache Venice AI metadata across platforms."""
 
     def __init__(
@@ -31,13 +39,13 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=UPDATE_INTERVAL,
         )
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    async def _async_update_data(self) -> VeniceAICoordinatorData:
         """Fetch models and voices from Venice AI.
 
         Each category is fetched independently so a failure in one
         does not block the others.
         """
-        data: dict[str, Any] = {
+        data: VeniceAICoordinatorData = {
             "text_models": [],
             "audio_models": [],
             "voices": [],

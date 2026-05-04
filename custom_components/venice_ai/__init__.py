@@ -58,6 +58,7 @@ class VeniceAIRuntimeData:
 
     client: AsyncVeniceAIClient
     coordinator: VeniceAIDataUpdateCoordinator
+    ai_task_entity: object | None = None
 
 
 class VeniceAIConfigEntry(ConfigEntry):
@@ -126,8 +127,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     translation_placeholders={"config_entry": entry_id},
                 )
 
-            # Get the AI Task entity from the integration's own data store
-            ai_task_entity = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            # Get the AI Task entity from runtime_data (Architecture 7.1 fix)
+            ai_task_entity = entry.runtime_data.ai_task_entity
 
             if ai_task_entity is None:
                 raise ServiceValidationError(
@@ -263,6 +264,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     )
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    entry.async_on_unload(client.close)
 
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -279,16 +281,11 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload Venice AI."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    domain_data = hass.data.get(DOMAIN)
-    if domain_data is not None:
-        domain_data.pop(entry.entry_id, None)
-        if not domain_data:
-            hass.data.pop(DOMAIN, None)
-    runtime_data: VeniceAIRuntimeData = entry.runtime_data
-    if isinstance(runtime_data.client, AsyncVeniceAIClient):
-        await runtime_data.client.close()
+    """Unload Venice AI.
 
+    Client cleanup is handled automatically via entry.async_on_unload(client.close)
+    registered during async_setup_entry (HA best-practice — Architecture 7.1 / Item 19).
+    """
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     await async_unload_repairs(hass, entry)
     return unload_ok

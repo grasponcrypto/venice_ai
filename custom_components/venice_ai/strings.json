@@ -62,6 +62,14 @@
         "description": "The Venice AI API is unreachable for {entry_title}: {error}."
       }
     },
+    "exceptions": {
+      "invalid_config_entry": {
+        "message": "Config entry {config_entry} is not a Venice AI entry."
+      },
+      "entity_not_found": {
+        "message": "Venice AI AI Task entity not found for config entry {entry_id}."
+      }
+    },
     "services": {
       "generate_image": {
         "name": "Generate Image",

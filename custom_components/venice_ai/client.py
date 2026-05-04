@@ -501,7 +501,9 @@ class AsyncVeniceAIClient:
         """Initialize the client."""
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        self._http_client = http_client if http_client else httpx.AsyncClient()
+        self._http_client = http_client if http_client else httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0)
+        )
         self._should_close_client = not http_client
         self._closed = False
 
