@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import struct
 from collections.abc import AsyncIterable
-from typing import Any
 
 from homeassistant.components import stt
 from homeassistant.components.stt import (
@@ -66,16 +65,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Venice AI STT entity."""
-    async_add_entities([
-        VeniceAISTT(
-            entry,
-            entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
-            entry.options.get(
-                CONF_STT_RESPONSE_FORMAT, RECOMMENDED_STT_RESPONSE_FORMAT
-            ),
-            entry.options.get(CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS),
-        )
-    ])
+    async_add_entities([VeniceAISTT(entry)])
 
 
 class VeniceAISTT(SpeechToTextEntity):
@@ -84,15 +74,9 @@ class VeniceAISTT(SpeechToTextEntity):
     def __init__(
         self,
         entry: ConfigEntry,
-        model: str,
-        response_format: str,
-        timestamps: bool,
     ) -> None:
         """Initialize Venice AI STT."""
         self.entry = entry
-        self._model = model
-        self._response_format = response_format
-        self._timestamps = timestamps
         self._attr_unique_id = f"{entry.entry_id}_stt"
         self._attr_name = entry.title
         self._attr_device_info = dr.DeviceInfo(
@@ -173,12 +157,21 @@ class VeniceAISTT(SpeechToTextEntity):
                 _LOGGER.warning("Received empty audio stream for transcription")
                 return stt.SpeechResult("", stt.SpeechResultState.ERROR)
 
+            # Read options dynamically so changes after setup take effect immediately
+            model = self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+            response_format = self.entry.options.get(
+                CONF_STT_RESPONSE_FORMAT, RECOMMENDED_STT_RESPONSE_FORMAT
+            )
+            timestamps = self.entry.options.get(
+                CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS
+            )
+
             _LOGGER.debug(
                 "Processing audio stream (%d bytes) with model=%s, format=%s, timestamps=%s",
                 len(audio_data),
-                self._model,
-                self._response_format,
-                self._timestamps,
+                model,
+                response_format,
+                timestamps,
             )
 
             # Convert PCM data to WAV format since Venice AI expects proper WAV files
@@ -189,9 +182,9 @@ class VeniceAISTT(SpeechToTextEntity):
 
             result = await client.transcriptions.create(
                 audio_data=wav_data,
-                model=self._model,
-                response_format=self._response_format,
-                timestamps=self._timestamps,
+                model=model,
+                response_format=response_format,
+                timestamps=timestamps,
             )
 
             text = result.get("text", "")
