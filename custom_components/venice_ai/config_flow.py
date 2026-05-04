@@ -298,9 +298,12 @@ class VeniceAIOptionsFlow(OptionsFlow):
         models_options: list[SelectOptionDict],
         tts_models_options: list[SelectOptionDict],
         stt_models_options: list[SelectOptionDict],
+        llm_api_options: list[SelectOptionDict] | None = None,
     ) -> vol.Schema:
         """Build the voluptuous options schema from fetched model lists."""
         options = self.config_entry.options
+        if llm_api_options is None:
+            llm_api_options = [SelectOptionDict(label="None (disabled)", value="")]
         return vol.Schema(
             {
                 vol.Optional(
@@ -336,8 +339,14 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 ),
                 vol.Optional(
                     CONF_LLM_HASS_API,
-                    description={"suggested_value": options.get(CONF_LLM_HASS_API)},
-                ): cv.string,
+                    description={"suggested_value": options.get(CONF_LLM_HASS_API, "")},
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=llm_api_options,
+                        mode=SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
+                    )
+                ),
                 vol.Optional(
                     CONF_STRIP_THINKING_RESPONSE,
                     description={"suggested_value": options.get(CONF_STRIP_THINKING_RESPONSE, False)},
@@ -421,15 +430,46 @@ class VeniceAIOptionsFlow(OptionsFlow):
             }
         )
 
+    async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
+        """Return a list of available HA LLM API IDs as SelectOptionDicts.
+
+        Always includes a leading "None (disabled)" blank entry.  Dynamically
+        queries the llm helper if ``async_get_api_list`` is available; falls
+        back to the well-known ``"assist"`` API otherwise.
+        """
+        none_option = SelectOptionDict(label="None (disabled)", value="")
+        api_ids: list[str] = []
+        try:
+            if hasattr(llm, "async_get_api_list"):
+                api_ids = await llm.async_get_api_list(self.hass)
+            else:
+                # Probe the known "assist" API as a safe fallback
+                try:
+                    await llm.async_get_api(self.hass, "assist")
+                    api_ids = ["assist"]
+                except Exception:
+                    pass
+        except Exception:
+            _LOGGER.debug("Could not fetch LLM API list; using fallback")
+            api_ids = ["assist"]
+
+        return [none_option] + [
+            SelectOptionDict(label=api_id, value=api_id) for api_id in api_ids
+        ]
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Normalise the LLM API field: treat blank string as absent
+            if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
+                user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
             return self.async_create_entry(title="", data=user_input)
 
         models, tts_models, stt_models, errors = await self._fetch_model_options()
-        options_schema = self._build_options_schema(models, tts_models, stt_models)
+        llm_api_options = await self._fetch_llm_api_options()
+        options_schema = self._build_options_schema(models, tts_models, stt_models, llm_api_options)
 
         return self.async_show_form(
             step_id="init",

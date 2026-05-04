@@ -8,6 +8,7 @@ from collections import OrderedDict
 from typing import Any
 
 from homeassistant.components.conversation import (
+    HOME_ASSISTANT_AGENT,
     ConversationEntity,
     ConversationInput,
     ConversationResult,
@@ -225,7 +226,8 @@ def _trim_chat_log(chat_log: ChatLog) -> None:
     _LOGGER.debug(
         "Trimmed chat log from %d to %d messages", len(content), len(trimmed)
     )
-    chat_log.content = trimmed
+    chat_log.content.clear()
+    chat_log.content.extend(trimmed)
 
 
 class VeniceAIConversationEntity(ConversationEntity):
@@ -317,8 +319,16 @@ class VeniceAIConversationEntity(ConversationEntity):
         tools: list[llm.Tool] = []
         if llm_api:
             try:
-                api = await llm.async_get_api(self.hass, llm_api)
-                tools = api.tools
+                llm_context = llm.LLMContext(
+                    platform=DOMAIN,
+                    context=user_input.context,
+                    user_prompt=user_input.text,
+                    language=user_input.language,
+                    assistant=HOME_ASSISTANT_AGENT,
+                    device_id=user_input.device_id,
+                )
+                api = await llm.async_get_api(self.hass, llm_api, llm_context)
+                tools = list(api.tools)
             except Exception as err:
                 _LOGGER.warning("Failed to get LLM API %s: %s", llm_api, err)
 
@@ -436,12 +446,21 @@ class VeniceAIConversationEntity(ConversationEntity):
                         )
                         continue
 
-                    # Find matching tool and invoke
+                    # Find matching tool and invoke via the public HA LLM API
                     tool_result = None
                     for tool in tools:
                         if tool.name == tool_name:
                             try:
-                                tool_result = await tool.target(self.hass, tool_args, user_input.context)
+                                tool_input = llm.ToolInput(
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    platform=DOMAIN,
+                                    context=user_input.context,
+                                    user_prompt=user_input.text,
+                                    assistant=HOME_ASSISTANT_AGENT,
+                                    device_id=user_input.device_id,
+                                )
+                                tool_result = await tool.async_call(self.hass, tool_input)
                             except Exception as tool_err:
                                 _LOGGER.warning("Tool %s failed: %s", tool_name, tool_err)
                                 tool_result = {"error": str(tool_err)}

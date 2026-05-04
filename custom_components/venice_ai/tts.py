@@ -134,6 +134,9 @@ class VeniceAITTS(TextToSpeechEntity):
             len(audio_data) if audio_data else 0
         )
 
+        if not audio_data:
+            raise HomeAssistantError("TTS generation returned empty audio")
+
         return (response_format, audio_data)
 
     def async_get_supported_voices(self, language: str) -> list[Voice] | None:

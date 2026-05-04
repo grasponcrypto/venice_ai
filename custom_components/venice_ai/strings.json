@@ -49,6 +49,10 @@
         "title": "Deprecated Venice AI model",
         "description": "The model {model} is deprecated. Consider switching to {replacement}."
       },
+      "unavailable_model": {
+        "title": "Unavailable Venice AI {model_type} model",
+        "description": "The model {model} is no longer available from Venice AI. Please update your integration settings to select a supported model."
+      },
       "auth_failure": {
         "title": "Venice AI authentication failed",
         "description": "Re-authentication is required for {entry_title}."

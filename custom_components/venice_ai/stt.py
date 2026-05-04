@@ -21,6 +21,7 @@ from .const import (
     CONF_STT_RESPONSE_FORMAT,
     CONF_STT_TIMESTAMPS,
     DOMAIN,
+    MAX_STT_BUFFER_SIZE,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
@@ -151,6 +152,12 @@ class VeniceAISTT(SpeechToTextEntity):
             audio_data = bytearray()
             async for chunk in stream:
                 audio_data.extend(chunk)
+                if len(audio_data) > MAX_STT_BUFFER_SIZE:
+                    _LOGGER.error(
+                        "Audio buffer exceeded maximum size of %d bytes; aborting transcription",
+                        MAX_STT_BUFFER_SIZE,
+                    )
+                    return stt.SpeechResult("", stt.SpeechResultState.ERROR)
 
             # Handle empty audio streams gracefully
             if len(audio_data) == 0:
