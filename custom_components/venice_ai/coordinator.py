@@ -9,10 +9,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
+from .const import UPDATE_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
-
-UPDATE_INTERVAL_SECONDS = 3600  # 1 hour — matches client Models cache TTL
 
 
 class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -29,7 +28,7 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name="Venice AI",
-            update_interval=UPDATE_INTERVAL_SECONDS,
+            update_interval=UPDATE_INTERVAL,
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
