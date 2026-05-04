@@ -293,7 +293,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS]
 
     async def async_process(
-        self, user_input: ConversationInput, context: Any = None
+        self, user_input: ConversationInput
     ) -> ConversationResult:
         """Process a conversation input."""
         options = self.entry.options
