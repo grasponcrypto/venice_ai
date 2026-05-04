@@ -63,3 +63,6 @@ RECOMMENDED_STT_TIMESTAMPS = False
 CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
 RECOMMENDED_MAX_TOOL_ITERATIONS = 5
 MAX_CHAT_LOG_LENGTH = 50
+
+# Maximum number of concurrent conversations held in-memory (LRU eviction)
+MAX_CHAT_HISTORY_SIZE = 20

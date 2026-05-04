@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
 from typing import Any
 
 from homeassistant.components.conversation import (
@@ -37,6 +38,7 @@ from .const import (
     CONF_STRIP_THINKING_RESPONSE,
     DOMAIN,
     HAS_VOLUPTUOUS_OPENAPI,
+    MAX_CHAT_HISTORY_SIZE,
     MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
@@ -242,6 +244,43 @@ class VeniceAIConversationEntity(ConversationEntity):
             model="Conversation",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
+        # Conversation history keyed by conversation_id.
+        # OrderedDict used as an LRU cache: entries are moved to the tail on
+        # each access and the oldest (head) entry is evicted when the dict
+        # exceeds MAX_CHAT_HISTORY_SIZE, preventing unbounded memory growth.
+        self._chat_logs: OrderedDict[str, ChatLog] = OrderedDict()
+
+    def _get_or_create_chat_log(self, conversation_id: str | None) -> ChatLog:
+        """Return the persisted ChatLog for *conversation_id*, or create a new one.
+
+        Uses the OrderedDict as an LRU cache:
+        - On hit: move the entry to the tail (most-recently-used position).
+        - On miss: create a new empty ChatLog, insert at the tail, and evict the
+          oldest entry (head) if the cache exceeds MAX_CHAT_HISTORY_SIZE.
+
+        The caller is responsible for appending the new user message after this
+        method returns.
+        """
+        cid = conversation_id or ulid_util.ulid_now()
+        if cid in self._chat_logs:
+            # Promote to most-recently-used
+            self._chat_logs.move_to_end(cid)
+            _LOGGER.debug("Resuming existing conversation %s (%d messages)", cid, len(self._chat_logs[cid].content))
+            return self._chat_logs[cid]
+
+        # New conversation
+        chat_log = ChatLog(conversation_id=cid, content=[])
+        self._chat_logs[cid] = chat_log
+        # Evict least-recently-used if over the limit
+        if len(self._chat_logs) > MAX_CHAT_HISTORY_SIZE:
+            evicted_id, _ = self._chat_logs.popitem(last=False)
+            _LOGGER.debug(
+                "Evicted oldest conversation %s from history cache (limit=%d)",
+                evicted_id,
+                MAX_CHAT_HISTORY_SIZE,
+            )
+        _LOGGER.debug("Started new conversation %s", cid)
+        return chat_log
 
     @property
     def supported_languages(self) -> list[str]:
@@ -302,11 +341,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                 tool_dict["function"]["parameters"] = parameters_schema or {"type": "object", "properties": {}}
             venice_tools.append(tool_dict)
 
-        # Create chat log
-        chat_log = ChatLog(
-            conversation_id=user_input.conversation_id or ulid_util.ulid_now(),
-            content=[UserContent(content=user_input.text)],
-        )
+        # Retrieve existing chat log or create a new one, then append the new user message.
+        # History is persisted across calls so the model has full multi-turn context.
+        chat_log = self._get_or_create_chat_log(user_input.conversation_id)
+        chat_log.content.append(UserContent(content=user_input.text))
 
         assistant_response_content = None
         text_content = ""
@@ -451,6 +489,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                 conversation_id=chat_log.conversation_id,
                 response=intent_response,
             )
+
+        # Persist the final assistant turn so subsequent calls see the full history.
+        chat_log.content.append(
+            AssistantContent(agent_id="venice_ai", content=assistant_response_content)
+        )
+        _trim_chat_log(chat_log)
 
         # Build response
         intent_response = intent.IntentResponse(language=user_input.language)
