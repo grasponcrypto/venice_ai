@@ -43,9 +43,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Venice AI TTS platform."""
-    from . import VeniceAIRuntimeData
-
-    runtime_data: VeniceAIRuntimeData = config_entry.runtime_data
     async_add_entities([VeniceAITTS(config_entry)])
 
 
@@ -103,17 +100,30 @@ class VeniceAITTS(TextToSpeechEntity):
             "tts_speed": options.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED),
         }
 
+    def _get_tts_option(
+        self,
+        options: dict[str, Any] | None,
+        option_key: str,
+        config_key: str,
+        default: Any,
+    ) -> Any:
+        """Return a TTS option, falling back to config entry then recommended default."""
+        if options is None:
+            options = {}
+        return options.get(
+            option_key, self._config_entry.options.get(config_key, default)
+        )
+
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any] | None = None
     ) -> TtsAudioType:
         """Generate TTS audio."""
-        if options is None:
-            options = {}
-
-        voice = options.get(ATTR_VOICE, RECOMMENDED_TTS_VOICE)
-        model = options.get("tts_model", RECOMMENDED_TTS_MODEL)
-        response_format = options.get(ATTR_AUDIO_OUTPUT, RECOMMENDED_TTS_RESPONSE_FORMAT)
-        speed = options.get("tts_speed", RECOMMENDED_TTS_SPEED)
+        voice = self._get_tts_option(options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
+        model = self._get_tts_option(options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        response_format = self._get_tts_option(
+            options, ATTR_AUDIO_OUTPUT, CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+        )
+        speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
         _LOGGER.debug("Generating TTS for message: %s", message)
         _LOGGER.debug(
@@ -150,10 +160,12 @@ class VeniceAITTS(TextToSpeechEntity):
         message = "".join([chunk async for chunk in request.message_gen])
         options = dict(request.options or {})
 
-        voice = options.get(ATTR_VOICE, RECOMMENDED_TTS_VOICE)
-        model = options.get("tts_model", RECOMMENDED_TTS_MODEL)
-        response_format = options.get(ATTR_AUDIO_OUTPUT, RECOMMENDED_TTS_RESPONSE_FORMAT)
-        speed = options.get("tts_speed", RECOMMENDED_TTS_SPEED)
+        voice = self._get_tts_option(options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
+        model = self._get_tts_option(options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        response_format = self._get_tts_option(
+            options, ATTR_AUDIO_OUTPUT, CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+        )
+        speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
         _LOGGER.debug("Streaming TTS for message: %s", message)
         _LOGGER.debug(
