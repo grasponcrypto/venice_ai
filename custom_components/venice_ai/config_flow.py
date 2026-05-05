@@ -17,6 +17,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, llm, selector
+from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -197,10 +198,6 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
 class VeniceAIOptionsFlow(OptionsFlow):
     """Options flow for Venice AI."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
     async def _fetch_model_options(
         self,
     ) -> tuple[list[SelectOptionDict], list[SelectOptionDict], list[SelectOptionDict], dict[str, str]]:
@@ -229,7 +226,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
             return chat_options, tts_options, stt_options, errors
 
         try:
-            async with AsyncVeniceAIClient(api_key=api_key) as client:
+            async with AsyncVeniceAIClient(
+                api_key=api_key,
+                http_client=get_async_client(self.hass),
+            ) as client:
                 _LOGGER.debug("Fetching text models for options flow")
                 text_resp = await client.models.list(model_type="text")
                 if isinstance(text_resp, list):
