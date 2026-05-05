@@ -265,7 +265,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     )
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
-    entry.async_on_unload(client.close)
 
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -284,9 +283,18 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Venice AI.
 
-    Client cleanup is handled automatically via entry.async_on_unload(client.close)
-    registered during async_setup_entry (HA best-practice — Architecture 7.1 / Item 19).
+    Explicitly awaits client.close() after platforms are unloaded.
+    Previously client.close was registered via entry.async_on_unload,
+    but async_on_unload accepts only sync callables — an async close()
+    would be called and its coroutine discarded, leaking the httpx
+    session. By awaiting close() here we guarantee the client is shut
+    down cleanly (CRIT-2 fix).
     """
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     await async_unload_repairs(hass, entry)
+
+    # Explicitly close the async client — async_on_unload cannot await coroutines.
+    client: AsyncVeniceAIClient = entry.runtime_data.client
+    await client.close()
+
     return unload_ok

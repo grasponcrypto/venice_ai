@@ -400,6 +400,23 @@ The repository contains no test files. Adding a full test suite for a Home Assis
 
 ---
 
+## CRIT-2 Fix — `client.close` registered as synchronous `async_on_unload` callback
+
+**File:** `__init__.py`
+
+**Issue:** `entry.async_on_unload(client.close)` registered an async coroutine function (`async def close`) as a synchronous callback. `async_on_unload` accepts `Callable[[], None]` — it cannot await coroutines. HA would call `client.close()`, receive a coroutine object, and discard it, leaking the underlying `httpx.AsyncClient` session on every reload/unload.
+
+**Fix applied (Option B — preferred):**
+- Removed `entry.async_on_unload(client.close)` from `async_setup_entry`.
+- Added explicit `await client.close()` in `async_unload_entry` after platforms and repairs are unloaded.
+- Updated docstring in `async_unload_entry` to explain why explicit cleanup is necessary.
+
+This ensures the httpx client is always properly awaited and closed during teardown, eliminating the silent resource leak.
+
+**Status:** ✅ FIXED
+
+---
+
 ## 🏗️ Recommended Priority Fix Order
 
 1. **Add `ai_task` to `manifest.json` dependencies** — ✅ DONE
