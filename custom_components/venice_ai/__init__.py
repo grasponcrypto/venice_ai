@@ -233,8 +233,10 @@ async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
             async_handle_coordinator_update(hass, entry, coordinator)
 
         entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
+    except ImportError:
+        _LOGGER.debug("Repairs platform not available in this HA version")
     except Exception:
-        _LOGGER.debug("Repairs setup failed (likely unsupported HA version)")
+        _LOGGER.exception("Unexpected error during repairs setup")
 
 
 async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -243,8 +245,10 @@ async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
         from .repairs import async_unload_entry as async_unload_repairs_entry
 
         await async_unload_repairs_entry(hass, entry)
+    except ImportError:
+        _LOGGER.debug("Repairs platform not available in this HA version")
     except Exception:
-        _LOGGER.debug("Repairs unload failed")
+        _LOGGER.exception("Unexpected error during repairs unload")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
