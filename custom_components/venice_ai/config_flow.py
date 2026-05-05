@@ -80,10 +80,15 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
     async def async_migrate_entry(
-        self, hass: HomeAssistant, entry: ConfigEntry
+        hass: HomeAssistant, entry: ConfigEntry
     ) -> bool:
         """Migrate an old config entry to the current version.
+
+        This is a ``@staticmethod`` matching Home Assistant's core signature.
+        Receiving ``self`` is incorrect — when HA calls migration it passes
+        only ``hass`` and ``config_entry``.
 
         Currently there is only version 1, so no migration is needed.
         Future versions should handle data and options migration here.

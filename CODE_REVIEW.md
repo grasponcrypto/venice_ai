@@ -437,6 +437,30 @@ This respects the entity's public contract, preserves encapsulation, and ensures
 
 ---
 
+## CRIT-4 Fix — `async_migrate_entry` signature mismatch
+
+**File:** `config_flow.py`
+
+**Issue:** `VeniceAIConfigFlow.async_migrate_entry` was defined as an instance method receiving `self`, but Home Assistant's core signature for `ConfigFlow.async_migrate_entry` is a **static method** that does not receive `self`:
+
+```python
+@staticmethod
+async def async_migrate_entry(hass, config_entry) -> bool:
+```
+
+Having `self` in the signature meant HA would pass the wrong arguments — when migration is triggered (e.g., on a version bump), the call would either fail with a `TypeError` or silently skip migration. Even though there is currently only version 1, this was a latent breaking defect.
+
+**Fix applied:**
+- Added `@staticmethod` decorator to `async_migrate_entry`.
+- Removed `self` from the parameter list.
+- Updated the docstring to document why the static-method signature is required.
+
+This ensures the method signature matches HA's core contract, so migration will work correctly if the config entry version is ever bumped in a future release.
+
+**Status:** ✅ FIXED
+
+---
+
 ## 🏗️ Recommended Priority Fix Order
 
 1. **Add `ai_task` to `manifest.json` dependencies** — ✅ DONE
