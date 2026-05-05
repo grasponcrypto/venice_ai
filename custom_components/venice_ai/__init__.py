@@ -258,6 +258,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
         raise ConfigEntryNotReady(err) from err
 
     coordinator = VeniceAIDataUpdateCoordinator(hass, client)
+    await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = VeniceAIRuntimeData(
         client=client,
         coordinator=coordinator,
