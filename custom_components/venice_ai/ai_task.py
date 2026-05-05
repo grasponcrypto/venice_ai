@@ -98,12 +98,25 @@ else:
                 self._attr_unique_id,
             )
 
+        async def async_generate_data(
+            self,
+            task: ai_task.GenDataTask,
+            chat_log: conversation.ChatLog,
+        ) -> ai_task.GenDataTaskResult:
+            """Handle a generate data task.
+
+            Public entry-point that service handlers (and HA's ai_task platform)
+            should call.  Internally delegates to _async_generate_data so the
+            implementation stays testable and overridable.
+            """
+            return await self._async_generate_data(task, chat_log)
+
         async def _async_generate_data(
             self,
             task: ai_task.GenDataTask,
             chat_log: conversation.ChatLog,
         ) -> ai_task.GenDataTaskResult:
-            """Handle a generate data task."""
+            """Internal implementation of generate data task."""
             # Build a local messages list without mutating chat_log.content
             messages = []
             for msg in chat_log.content:

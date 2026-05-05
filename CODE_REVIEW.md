@@ -417,6 +417,26 @@ This ensures the httpx client is always properly awaited and closed during teard
 
 ---
 
+## CRIT-3 Fix — Service handler directly calls private entity method
+
+**File:** `__init__.py`, `ai_task.py`
+
+**Issue:** The `generate_data` service handler in `__init__.py` called `ai_task_entity._async_generate_data(gen_task, chat_log)` — a private/protected method on the entity. This anti-pattern:
+- Bypasses HA's entity locking and any platform-level lifecycle checks.
+- Breaks encapsulation — if HA renames or changes the internal method, the service fails.
+- Risks race conditions from concurrent service calls.
+
+**Fix applied:**
+- Added a public `async_generate_data()` method in `VeniceAITaskEntity` (`ai_task.py`) that delegates to the existing `_async_generate_data()` implementation.
+- Updated the service handler in `__init__.py` to call `ai_task_entity.async_generate_data(gen_task, chat_log)` instead of the private method.
+- Added a docstring to the public method explaining it is the intended entry-point for service handlers and the HA ai_task platform.
+
+This respects the entity's public contract, preserves encapsulation, and ensures any future platform-level locking or validation in `async_generate_data` will be honored.
+
+**Status:** ✅ FIXED
+
+---
+
 ## 🏗️ Recommended Priority Fix Order
 
 1. **Add `ai_task` to `manifest.json` dependencies** — ✅ DONE

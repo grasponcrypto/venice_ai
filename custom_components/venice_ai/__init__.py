@@ -153,7 +153,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             )
 
             try:
-                result = await ai_task_entity._async_generate_data(gen_task, chat_log)
+                # Call the public async_generate_data API instead of the
+                # private _async_generate_data method (CRIT-3 fix).  This
+                # respects the entity's public contract and avoids bypassing
+                # any locking or lifecycle checks the platform may add.
+                result = await ai_task_entity.async_generate_data(gen_task, chat_log)
                 return {
                     "conversation_id": result.conversation_id,
                     "data": result.data,
