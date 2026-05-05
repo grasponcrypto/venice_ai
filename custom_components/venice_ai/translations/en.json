@@ -1,0 +1,123 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Venice AI Setup",
+                "data": {
+                    "api_key": "Venice AI API Key"
+                }
+            }
+        },
+        "error": {
+            "invalid_auth": "Invalid API key",
+            "cannot_connect": "Failed to connect to Venice AI",
+            "unknown": "Unexpected error"
+        },
+        "abort": {
+            "already_configured": "Venice AI is already configured",
+            "reauth_successful": "Re-authentication was successful"
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Venice AI Options",
+                "description": "Configure Venice AI settings. Only models with function calling support are shown.",
+                "data": {
+                    "chat_model": "AI Model",
+                    "prompt": "System Prompt",
+                    "llm_hass_api": "Control Home Assistant",
+                    "temperature": "Temperature (0-2)",
+                    "top_p": "Top P (0-1)",
+                    "max_tokens": "Max Tokens",
+                    "strip_thinking_response": "Strip thinking response (for reasoning models)",
+                    "disable_thinking": "Disable thinking (for reasoning models)",
+                    "max_tool_iterations": "Max Tool Iterations",
+                    "tts_model": "TTS Model",
+                    "tts_voice": "TTS Voice",
+                    "tts_response_format": "TTS Response Format",
+                    "tts_speed": "TTS Speed",
+                    "stt_model": "STT Model",
+                    "stt_response_format": "STT Response Format",
+                    "stt_timestamps": "STT Include Timestamps"
+                }
+            }
+        }
+    },
+    "issues": {
+        "deprecated_model": {
+            "title": "Deprecated Venice AI model",
+            "description": "The model {model} is deprecated. Consider switching to {replacement}."
+        },
+        "unavailable_model": {
+            "title": "Unavailable Venice AI {model_type} model",
+            "description": "The model {model} is no longer available from Venice AI. Please update your integration settings to select a supported model."
+        },
+        "auth_failure": {
+            "title": "Venice AI authentication failed",
+            "description": "Re-authentication is required for {entry_title}."
+        },
+        "api_unavailable": {
+            "title": "Venice AI API unavailable",
+            "description": "The Venice AI API is unreachable for {entry_title}: {error}."
+        }
+    },
+    "exceptions": {
+        "invalid_config_entry": {
+            "message": "Config entry {config_entry} is not a Venice AI entry."
+        },
+        "entity_not_found": {
+            "message": "Venice AI AI Task entity not found for config entry {entry_id}."
+        }
+    },
+    "services": {
+        "generate_image": {
+            "name": "Generate Image",
+            "description": "Generate an image using Venice AI.",
+            "fields": {
+                "config_entry": {
+                    "name": "Config Entry",
+                    "description": "The Venice AI config entry to use for this service call."
+                },
+                "prompt": {
+                    "name": "Prompt",
+                    "description": "Image description"
+                },
+                "size": {
+                    "name": "Size",
+                    "description": "Image size"
+                },
+                "quality": {
+                    "name": "Quality",
+                    "description": "Image quality"
+                },
+                "style": {
+                    "name": "Style",
+                    "description": "Image style"
+                }
+            }
+        },
+        "ai_task": {
+            "name": "VeniceAI AI Task",
+            "description": "Generate structured data using Venice AI.",
+            "fields": {
+                "config_entry": {
+                    "name": "Config Entry",
+                    "description": "The Venice AI config entry to use for this service call."
+                },
+                "task": {
+                    "name": "Task",
+                    "description": "Task description"
+                },
+                "structure": {
+                    "name": "Structure",
+                    "description": "Expected response structure or schema"
+                }
+            }
+        },
+        "conversation": {
+            "name": "VeniceAI Conversation",
+            "description": "Conversation agent"
+        }
+    }
+}
