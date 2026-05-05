@@ -8,7 +8,14 @@ from typing import Any, TypedDict
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
+from .client import (
+    AsyncVeniceAIClient,
+    AuthenticationError,
+    NetworkError,
+    RateLimitError,
+    ServiceUnavailableError,
+    VeniceAIError,
+)
 from .const import UPDATE_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,9 +65,16 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                 _LOGGER.debug("Coordinator fetched %d text models", len(text_models))
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching text models: %s", err)
-            raise UpdateFailed(f"Authentication error: {err}") from err
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except RateLimitError as err:
+            _LOGGER.warning("Rate limit exceeded fetching text models: %s", err)
+            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
+        except ServiceUnavailableError as err:
+            _LOGGER.warning("Venice AI service unavailable fetching text models: %s", err)
+        except NetworkError as err:
+            _LOGGER.warning("Network error fetching text models: %s", err)
         except VeniceAIError as err:
-            _LOGGER.warning("Error fetching text models: %s", err)
+            _LOGGER.warning("Venice AI error fetching text models: %s", err)
         except Exception:
             _LOGGER.exception("Unexpected error fetching text models")
 
@@ -71,9 +85,16 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                 _LOGGER.debug("Coordinator fetched %d audio models", len(audio_models))
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching audio models: %s", err)
-            raise UpdateFailed(f"Authentication error: {err}") from err
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except RateLimitError as err:
+            _LOGGER.warning("Rate limit exceeded fetching audio models: %s", err)
+            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
+        except ServiceUnavailableError as err:
+            _LOGGER.warning("Venice AI service unavailable fetching audio models: %s", err)
+        except NetworkError as err:
+            _LOGGER.warning("Network error fetching audio models: %s", err)
         except VeniceAIError as err:
-            _LOGGER.warning("Error fetching audio models: %s", err)
+            _LOGGER.warning("Venice AI error fetching audio models: %s", err)
         except Exception:
             _LOGGER.exception("Unexpected error fetching audio models")
 
@@ -84,9 +105,16 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                 _LOGGER.debug("Coordinator fetched %d voices", len(voices))
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching voices: %s", err)
-            raise UpdateFailed(f"Authentication error: {err}") from err
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except RateLimitError as err:
+            _LOGGER.warning("Rate limit exceeded fetching voices: %s", err)
+            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
+        except ServiceUnavailableError as err:
+            _LOGGER.warning("Venice AI service unavailable fetching voices: %s", err)
+        except NetworkError as err:
+            _LOGGER.warning("Network error fetching voices: %s", err)
         except VeniceAIError as err:
-            _LOGGER.warning("Error fetching voices: %s", err)
+            _LOGGER.warning("Venice AI error fetching voices: %s", err)
         except Exception:
             _LOGGER.exception("Unexpected error fetching voices")
 

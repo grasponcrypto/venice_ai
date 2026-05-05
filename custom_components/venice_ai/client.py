@@ -18,7 +18,44 @@ class VeniceAIError(Exception):
 
 
 class AuthenticationError(VeniceAIError):
-    """Authentication error."""
+    """Authentication error (HTTP 401)."""
+
+
+class RateLimitError(VeniceAIError):
+    """Rate-limit error (HTTP 429) — the Venice AI API quota has been exceeded."""
+
+
+class ServiceUnavailableError(VeniceAIError):
+    """Service unavailable error (HTTP 5xx) — Venice AI is temporarily down."""
+
+
+class NetworkError(VeniceAIError):
+    """Network-level error — could not reach the Venice AI API (timeout, connection refused, etc.)."""
+
+
+def _categorize_http_error(
+    status_code: int, error_detail: str, context: str = ""
+) -> VeniceAIError:
+    """Return the most specific VeniceAIError subtype for an HTTP status code.
+
+    Centralises status-code → exception-type mapping so every API method raises
+    a consistent, typed exception.  Callers should ``raise ... from err`` the
+    returned instance directly.
+
+    Args:
+        status_code: The HTTP response status code.
+        error_detail: A human-readable description (from the response body).
+        context: Optional description of the operation, e.g. ``"fetching models"``.
+    """
+    suffix = f" ({context})" if context else ""
+    msg = f"HTTP error {status_code}{suffix}: {error_detail}"
+    if status_code == 401:
+        return AuthenticationError(f"Invalid API key{suffix}")
+    if status_code == 429:
+        return RateLimitError(msg)
+    if status_code >= 500:
+        return ServiceUnavailableError(msg)
+    return VeniceAIError(msg)
 
 
 class ChatCompletionChunk:
@@ -90,12 +127,10 @@ class ChatCompletions:
             except Exception:
                 pass
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key") from err
-            raise VeniceAIError(f"HTTP error {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "streaming chat") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI request error: %s", err)
-            raise VeniceAIError(f"Request error: {err}") from err
+            raise NetworkError(f"Request error (streaming chat): {err}") from err
 
         async def _stream() -> AsyncGenerator[ChatCompletionChunk, None]:
             try:
@@ -110,6 +145,11 @@ class ChatCompletions:
                             _LOGGER.warning("Failed to decode stream chunk: %s", line)
                     else:
                         _LOGGER.warning("Received unexpected line in stream: %s", line)
+            except httpx.TransportError as err:
+                # Convert mid-stream transport failures (connection reset, server close,
+                # timeout) to a typed NetworkError so callers get consistent exceptions.
+                _LOGGER.error("Stream interrupted by transport error: %s", err)
+                raise NetworkError(f"Stream interrupted: {err}") from err
             finally:
                 if response is not None:
                     await response.aclose()
@@ -159,8 +199,7 @@ class ChatCompletions:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key") from err
+            # Try to extract a human-readable message from the JSON error body.
             error_message = error_detail
             if error_detail:
                 try:
@@ -171,11 +210,11 @@ class ChatCompletions:
                         error_message = error_json["error"]
                 except json.JSONDecodeError:
                     pass
-            raise VeniceAIError(f"HTTP error {err.response.status_code}: {error_message}") from err
+            raise _categorize_http_error(err.response.status_code, error_message, "chat completion") from err
 
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI request error: %s", err)
-            raise VeniceAIError(f"Request error: {err}") from err
+            raise NetworkError(f"Request error (chat completion): {err}") from err
 
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode non-streaming JSON response: %s", response.text)
@@ -221,12 +260,10 @@ class Models:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Models API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key checking models") from err
-            raise VeniceAIError(f"HTTP error fetching models {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "fetching models") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Models API request error: %s (URL: %s, type: %s)", err, url, type(err).__name__)
-            raise VeniceAIError(f"Request error fetching models: {err}") from err
+            raise NetworkError(f"Request error fetching models: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode models JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode models API response") from err
@@ -254,12 +291,10 @@ class Voices:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Voices API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key for voices") from err
-            raise VeniceAIError(f"HTTP error fetching voices {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "fetching voices") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Voices API request error: %s", err)
-            raise VeniceAIError(f"Request error fetching voices: {err}") from err
+            raise NetworkError(f"Request error fetching voices: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode voices JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode voices API response") from err
@@ -317,12 +352,10 @@ class Speech:
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key for speech") from err
-            raise VeniceAIError(f"HTTP error generating speech {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "generating speech") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise VeniceAIError(f"Request error generating speech: {err}") from err
+            raise NetworkError(f"Request error generating speech: {err}") from err
 
     async def generate_streaming(
         self,
@@ -357,8 +390,12 @@ class Speech:
             response.raise_for_status()
 
             _LOGGER.debug("Streaming TTS response received, yielding chunks")
-            async for chunk in response.aiter_bytes():
-                yield chunk
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            except httpx.TransportError as err:
+                _LOGGER.error("Streaming TTS transport error: %s", err)
+                raise NetworkError(f"Streaming TTS interrupted: {err}") from err
 
         except httpx.HTTPStatusError as err:
             error_detail = "Unknown error"
@@ -371,12 +408,10 @@ class Speech:
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key for speech") from err
-            raise VeniceAIError(f"HTTP error generating speech {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "streaming speech") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise VeniceAIError(f"Request error generating speech: {err}") from err
+            raise NetworkError(f"Request error generating streaming speech: {err}") from err
 
 
 class Transcriptions:
@@ -425,12 +460,10 @@ class Transcriptions:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Transcriptions API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key for transcriptions") from err
-            raise VeniceAIError(f"HTTP error creating transcription {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "creating transcription") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
-            raise VeniceAIError(f"Request error creating transcription: {err}") from err
+            raise NetworkError(f"Request error creating transcription: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode transcriptions JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode transcriptions API response") from err
@@ -478,12 +511,10 @@ class Images:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Images API HTTP error %s: %s", err.response.status_code, error_detail)
-            if err.response.status_code == 401:
-                raise AuthenticationError("Invalid API key for image generation") from err
-            raise VeniceAIError(f"HTTP error generating image {err.response.status_code}: {error_detail}") from err
+            raise _categorize_http_error(err.response.status_code, error_detail, "generating image") from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Images API request error: %s", err)
-            raise VeniceAIError(f"Request error generating image: {err}") from err
+            raise NetworkError(f"Request error generating image: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode images JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode images API response") from err
@@ -562,10 +593,10 @@ class AsyncVeniceAIClient:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    raise VeniceAIError(f"Max retries exceeded: {err}") from err
+                    raise NetworkError(f"Max retries exceeded: {err}") from err
 
         # Should never reach here; all retry attempts exhausted
-        raise VeniceAIError("Max retries exceeded")
+        raise NetworkError("Max retries exceeded")
 
     async def close(self) -> None:
         """Close the httpx client if it was created internally."""
