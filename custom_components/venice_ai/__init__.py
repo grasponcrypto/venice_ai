@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 
@@ -88,6 +89,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
+        if entry.runtime_data is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="config_entry_not_loaded",
+                translation_placeholders={"config_entry": entry_id},
+            )
+
         client: AsyncVeniceAIClient = entry.runtime_data.client
 
         try:
@@ -128,6 +136,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     translation_placeholders={"config_entry": entry_id},
                 )
 
+            if entry.runtime_data is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="config_entry_not_loaded",
+                    translation_placeholders={"config_entry": entry_id},
+                )
+
             # Get the AI Task entity from runtime_data (Architecture 7.1 fix)
             ai_task_entity = entry.runtime_data.ai_task_entity
 
@@ -163,6 +178,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     "conversation_id": result.conversation_id,
                     "data": result.data,
                 }
+            except asyncio.CancelledError:
+                raise
             except Exception as err:
                 raise HomeAssistantError(f"Error generating data: {err}") from err
 

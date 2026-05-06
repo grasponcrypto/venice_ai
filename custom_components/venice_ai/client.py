@@ -121,6 +121,8 @@ class ChatCompletions:
             response.raise_for_status()
 
         except httpx.HTTPStatusError as err:
+            if response is not None:
+                await response.aclose()
             error_detail = ""
             try:
                 error_detail = err.response.text
@@ -129,6 +131,8 @@ class ChatCompletions:
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
             raise _categorize_http_error(err.response.status_code, error_detail, "streaming chat") from err
         except httpx.RequestError as err:
+            if response is not None:
+                await response.aclose()
             _LOGGER.error("Venice AI request error: %s", err)
             raise NetworkError(f"Request error (streaming chat): {err}") from err
 

@@ -204,7 +204,7 @@ def async_handle_coordinator_update(
             hass,
             DOMAIN,
             ISSUE_ID_AUTH_FAILURE.format(entry_id=entry_id),
-            is_fixable=True,
+            is_fixable=False,
             is_persistent=True,
             severity=IssueSeverity.ERROR,
             translation_key="auth_failure",

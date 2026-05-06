@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -188,6 +189,8 @@ else:
             except VeniceAIError as err:
                 _LOGGER.error("Venice AI error during task generation: %s", err)
                 raise HomeAssistantError(f"Error generating data: {err}") from err
+            except asyncio.CancelledError:
+                raise
             except Exception as err:
                 _LOGGER.exception("Unexpected error during task generation")
                 raise HomeAssistantError(f"Unexpected error: {err}") from err

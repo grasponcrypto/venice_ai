@@ -1,6 +1,7 @@
 """Speech-to-Text provider for Venice AI."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
 from collections.abc import AsyncIterable
@@ -202,6 +203,8 @@ class VeniceAISTT(SpeechToTextEntity):
         except VeniceAIError as err:
             _LOGGER.error("Venice AI transcription error: %s", err)
             return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+        except asyncio.CancelledError:
+            raise
         except Exception as err:
             _LOGGER.exception("Unexpected error during transcription: %s", err)
             return stt.SpeechResult("", stt.SpeechResultState.ERROR)

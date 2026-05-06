@@ -307,10 +307,11 @@ class VeniceAIConversationEntity(ConversationEntity):
         prompt_template_str = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
         llm_api = options.get(CONF_LLM_HASS_API)
 
-        # Render system prompt template
+        # Render system prompt template with Home Assistant context so
+        # template functions (e.g. now(), states(), area_entities()) work.
         try:
-            prompt_template = Template(prompt_template_str)
-            system_prompt = prompt_template.render()
+            prompt_template = Template(prompt_template_str, self.hass)
+            system_prompt = prompt_template.async_render()
         except TemplateError as err:
             _LOGGER.error("Error rendering prompt template: %s", err)
             raise HomeAssistantError(f"Error rendering prompt: {err}") from err
