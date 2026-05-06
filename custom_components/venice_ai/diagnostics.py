@@ -5,6 +5,7 @@ from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
@@ -37,8 +38,11 @@ async def async_get_config_entry_diagnostics(
     entry: ConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    runtime_data = entry.runtime_data
+    from . import VeniceAIRuntimeData
+
+    runtime_data: VeniceAIRuntimeData | None = getattr(entry, "runtime_data", None)
     client = runtime_data.client if runtime_data else None
+    coordinator = runtime_data.coordinator if runtime_data else None
 
     # Pre-process entry.data to apply custom api_key redaction before handing
     # the dict to async_redact_data (which would replace it entirely with
@@ -60,6 +64,31 @@ async def async_get_config_entry_diagnostics(
         "data": async_redact_data(entry_data, TO_REDACT),
         "state": entry.state.value if hasattr(entry.state, "value") else str(entry.state),
         "client_available": client is not None,
+        "homeassistant_version": HA_VERSION,
     }
+
+    # Coordinator state (MIN-9 fix)
+    if coordinator is not None:
+        last_exception = None
+        if coordinator.last_exception is not None:
+            last_exception = f"{type(coordinator.last_exception).__name__}: {coordinator.last_exception}"
+
+        coordinator_data = coordinator.data or {}
+        text_models = coordinator_data.get("text_models", [])
+        audio_models = coordinator_data.get("audio_models", [])
+        voices = coordinator_data.get("voices", [])
+
+        diagnostics["coordinator"] = {
+            "last_update_success": coordinator.last_update_success,
+            "last_exception": last_exception,
+            "update_interval_seconds": coordinator.update_interval.total_seconds()
+            if hasattr(coordinator, "update_interval") and coordinator.update_interval
+            else None,
+            "text_models_count": len(text_models),
+            "audio_models_count": len(audio_models),
+            "voices_count": len(voices),
+        }
+    else:
+        diagnostics["coordinator"] = None
 
     return diagnostics

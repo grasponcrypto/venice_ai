@@ -252,11 +252,19 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 _LOGGER.debug("Fetching audio models for options flow")
                 audio_resp = await client.models.list(model_type="audio")
                 if isinstance(audio_resp, list):
-                    tts_raw = [m for m in audio_resp if m.get("id", "").startswith("tts-")]
+                    # Prefer API type field; fall back to prefix matching for
+                    # backwards compatibility (MIN-4 fix).
+                    tts_raw = [
+                        m
+                        for m in audio_resp
+                        if m.get("type") == "tts" or m.get("id", "").startswith("tts-")
+                    ]
                     stt_raw = [
                         m
                         for m in audio_resp
-                        if m.get("id", "").startswith("stt-") or "parakeet" in m.get("id", "")
+                        if m.get("type") == "stt"
+                        or m.get("id", "").startswith("stt-")
+                        or "parakeet" in m.get("id", "")
                     ]
                     tts_options = [
                         SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
@@ -328,7 +336,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     CONF_MAX_TOKENS,
                     description={"suggested_value": options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)},
                 ): NumberSelector(
-                    NumberSelectorConfig(min=1, max=4096, step=1, mode="slider")
+                    NumberSelectorConfig(min=1, max=32768, step=1, mode="slider")
                 ),
                 vol.Optional(
                     CONF_TOP_P,
@@ -466,15 +474,35 @@ class VeniceAIOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             # Normalise the LLM API field: treat blank string as absent
             if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
                 user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
-            return self.async_create_entry(title="", data=user_input)
+            else:
+                # SEC-4 fix: validate custom LLM API ID before accepting
+                try:
+                    await llm.async_get_api(
+                        self.hass, user_input[CONF_LLM_HASS_API]
+                    )
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Invalid LLM API ID '%s' entered in options flow: %s",
+                        user_input[CONF_LLM_HASS_API],
+                        err,
+                    )
+                    errors[CONF_LLM_HASS_API] = "invalid_llm_api"
 
-        models, tts_models, stt_models, errors = await self._fetch_model_options()
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
+
+        models, tts_models, stt_models, fetch_errors = await self._fetch_model_options()
         llm_api_options = await self._fetch_llm_api_options()
         options_schema = self._build_options_schema(models, tts_models, stt_models, llm_api_options)
+
+        # Merge fetch errors with validation errors
+        if fetch_errors:
+            errors.update(fetch_errors)
 
         return self.async_show_form(
             step_id="init",

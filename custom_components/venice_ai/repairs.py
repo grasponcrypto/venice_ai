@@ -25,7 +25,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.issue_registry import IssueSeverity
 
-from .client import AuthenticationError
+from .client import AuthenticationError, RateLimitError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_TTS_MODEL,
@@ -42,6 +42,7 @@ ISSUE_ID_DEPRECATED_MODEL = "deprecated_model_{entry_id}_{model_key}"
 ISSUE_ID_UNAVAIL_MODEL = "unavailable_model_{entry_id}_{model_key}"
 ISSUE_ID_AUTH_FAILURE = "auth_failure_{entry_id}"
 ISSUE_ID_API_UNAVAILABLE = "api_unavailable_{entry_id}"
+ISSUE_ID_RATE_LIMITED = "rate_limited_{entry_id}"
 
 
 async def async_setup_entry(
@@ -185,6 +186,7 @@ def async_handle_coordinator_update(
     # below if the failure is still present.
     ir.async_delete_issue(hass, DOMAIN, ISSUE_ID_AUTH_FAILURE.format(entry_id=entry_id))
     ir.async_delete_issue(hass, DOMAIN, ISSUE_ID_API_UNAVAILABLE.format(entry_id=entry_id))
+    ir.async_delete_issue(hass, DOMAIN, ISSUE_ID_RATE_LIMITED.format(entry_id=entry_id))
 
     last_exc = coordinator.last_exception
     if last_exc is None:
@@ -210,6 +212,20 @@ def async_handle_coordinator_update(
         )
         _LOGGER.warning(
             "Coordinator auth failure for entry %s — repair issue created", entry_id
+        )
+    elif isinstance(cause, RateLimitError):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            ISSUE_ID_RATE_LIMITED.format(entry_id=entry_id),
+            is_fixable=False,
+            is_persistent=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="rate_limited",
+            translation_placeholders={"entry_title": entry.title},
+        )
+        _LOGGER.warning(
+            "Coordinator rate limit for entry %s — repair issue created", entry_id
         )
     else:
         ir.async_create_issue(
@@ -254,6 +270,7 @@ def _async_delete_entry_issues(
         ISSUE_ID_UNAVAIL_MODEL.format(entry_id=entry_id, model_key=CONF_STT_MODEL),
         ISSUE_ID_AUTH_FAILURE.format(entry_id=entry_id),
         ISSUE_ID_API_UNAVAILABLE.format(entry_id=entry_id),
+        ISSUE_ID_RATE_LIMITED.format(entry_id=entry_id),
     ]
     for issue_id in issues:
         if registry.async_get_issue(DOMAIN, issue_id):

@@ -28,7 +28,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
 
-from .client import AsyncVeniceAIClient, VeniceAIError
+from .client import AsyncVeniceAIClient, RateLimitError, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
@@ -486,6 +486,17 @@ class VeniceAIConversationEntity(ConversationEntity):
                 _LOGGER.error("Assistant response content was None after loop.")
                 assistant_response_content = "Sorry, I couldn't get a response."
 
+        except RateLimitError as err:
+            _LOGGER.warning("Rate limit hit during conversation: %s", err)
+            intent_response = intent.IntentResponse(language=user_input.language)
+            intent_response.async_set_error(
+                intent.IntentResponseErrorCode.UNKNOWN,
+                "Rate limit exceeded. Please wait a moment and try again.",
+            )
+            return ConversationResult(
+                conversation_id=chat_log.conversation_id,
+                response=intent_response,
+            )
         except (VeniceAIError, HomeAssistantError, TemplateError) as err:
             _LOGGER.error("Error during conversation processing: %s", err)
             intent_response = intent.IntentResponse(language=user_input.language)

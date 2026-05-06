@@ -11,7 +11,8 @@
         "error": {
             "invalid_auth": "Invalid API key",
             "cannot_connect": "Failed to connect to Venice AI",
-            "unknown": "Unexpected error"
+            "unknown": "Unexpected error",
+            "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
         },
         "abort": {
             "already_configured": "Venice AI is already configured",
@@ -60,6 +61,10 @@
         "api_unavailable": {
             "title": "Venice AI API unavailable",
             "description": "The Venice AI API is unreachable for {entry_title}: {error}."
+        },
+        "rate_limited": {
+            "title": "Venice AI rate limit exceeded",
+            "description": "The Venice AI API rate limit has been exceeded for {entry_title}. The integration will retry automatically."
         }
     },
     "exceptions": {

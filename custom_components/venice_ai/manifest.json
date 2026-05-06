@@ -4,11 +4,14 @@
     "version": "1.0.0",
     "documentation": "https://github.com/grasponcrypto/venice_ai",
     "issue_tracker": "https://github.com/grasponcrypto/venice_ai/issues",
-    "requirements": [],
+    "requirements": [
+        "voluptuous-openapi>=0.0.4"
+    ],
     "dependencies": ["conversation"],
     "after_dependencies": ["ai_task", "assist_pipeline", "intent"],
     "codeowners": ["@grasponcrypto"],
     "iot_class": "cloud_polling",
     "integration_type": "service",
-    "config_flow": true
+    "config_flow": true,
+    "homeassistant": "2024.4.0"
 }
