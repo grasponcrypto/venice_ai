@@ -79,24 +79,44 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             _LOGGER.exception("Unexpected error fetching text models")
 
         try:
-            audio_models = await self.client.models.list(model_type="audio")
-            if isinstance(audio_models, list):
-                data["audio_models"] = audio_models
-                _LOGGER.debug("Coordinator fetched %d audio models", len(audio_models))
+            tts_models = await self.client.models.list(model_type="tts")
+            if isinstance(tts_models, list):
+                data["audio_models"].extend(tts_models)
+                _LOGGER.debug("Coordinator fetched %d TTS models", len(tts_models))
         except AuthenticationError as err:
-            _LOGGER.error("Authentication error fetching audio models: %s", err)
+            _LOGGER.error("Authentication error fetching TTS models: %s", err)
             raise UpdateFailed(f"Authentication failed: {err}") from err
         except RateLimitError as err:
-            _LOGGER.warning("Rate limit exceeded fetching audio models: %s", err)
+            _LOGGER.warning("Rate limit exceeded fetching TTS models: %s", err)
             raise UpdateFailed(f"Rate limit exceeded: {err}") from err
         except ServiceUnavailableError as err:
-            _LOGGER.warning("Venice AI service unavailable fetching audio models: %s", err)
+            _LOGGER.warning("Venice AI service unavailable fetching TTS models: %s", err)
         except NetworkError as err:
-            _LOGGER.warning("Network error fetching audio models: %s", err)
+            _LOGGER.warning("Network error fetching TTS models: %s", err)
         except VeniceAIError as err:
-            _LOGGER.warning("Venice AI error fetching audio models: %s", err)
+            _LOGGER.warning("Venice AI error fetching TTS models: %s", err)
         except Exception:
-            _LOGGER.exception("Unexpected error fetching audio models")
+            _LOGGER.exception("Unexpected error fetching TTS models")
+
+        try:
+            asr_models = await self.client.models.list(model_type="asr")
+            if isinstance(asr_models, list):
+                data["audio_models"].extend(asr_models)
+                _LOGGER.debug("Coordinator fetched %d ASR models", len(asr_models))
+        except AuthenticationError as err:
+            _LOGGER.error("Authentication error fetching ASR models: %s", err)
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except RateLimitError as err:
+            _LOGGER.warning("Rate limit exceeded fetching ASR models: %s", err)
+            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
+        except ServiceUnavailableError as err:
+            _LOGGER.warning("Venice AI service unavailable fetching ASR models: %s", err)
+        except NetworkError as err:
+            _LOGGER.warning("Network error fetching ASR models: %s", err)
+        except VeniceAIError as err:
+            _LOGGER.warning("Venice AI error fetching ASR models: %s", err)
+        except Exception:
+            _LOGGER.exception("Unexpected error fetching ASR models")
 
         try:
             voices = await self.client.voices.list()

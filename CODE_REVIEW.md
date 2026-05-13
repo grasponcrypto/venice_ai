@@ -1,476 +1,363 @@
-# Venice AI Home Assistant Integration — Code Review
-
-**Date:** 2026-04-10
-**Reviewer:** GLM 5.1
-**Integration Version:** 1.0.0
-**Files Reviewed:** 14 source files across `custom_components/venice_ai/`
-
-**Last Updated:** 2026-04-29
+# Venice AI — Home Assistant Integration Code Review
+**Branch:** `0.8-fix-n-clean` · **Reviewed:** May 2026  
+**Files:** `__init__.py`, `client.py`, `config_flow.py`, `const.py`, `conversation.py`, `coordinator.py`, `ai_task.py`, `tts.py`, `stt.py`, `diagnostics.py`, `repairs.py`, `manifest.json`
 
 ---
 
 ## Executive Summary
 
-The Venice AI integration implements conversation, TTS, STT, AI Task, and image generation capabilities via the Venice.ai API. The architecture is generally sound and follows Home Assistant patterns. **All issues identified in the initial review have been addressed or documented.**
+The integration has a solid architectural foundation — it follows HA patterns for `ConfigEntry`, `DataUpdateCoordinator`, `ConversationEntity`, `TextToSpeechEntity`, and `SpeechToTextEntity`, and the client layer (`client.py`) is well-structured with retry logic, TTL caching, and proper `httpx` usage. The previous review (`CODE_REVIEW.md` by GLM 5.1) addressed many structural issues but missed or introduced several **critical runtime bugs** that will break core functionality on a live install. There are also medium-severity gaps in conversation history management and option handling.
 
-
----
-
-## ✅ Fixed Issues
-
-### 1. Missing `Images` Client — FIXED
-
-**File:** `client.py`
-
-The `Images` class with a `generate()` method has been implemented, and `self.images = Images(self)` was added to `AsyncVeniceAIClient.__init__()`. The `generate_image` service now works correctly.
-
-**Status:** ✅ FIXED
+This review documents all remaining issues, categorized by severity and priority.
 
 ---
 
-### 2. Duplicate `VeniceAITaskEntity` Class — FIXED
+## 🔴 Priority 1 — Critical Bugs (Integration Broken)
 
-**Files:** `ai_task.py` and `todo.py`
+### P1-A: `conversation.py` — Wrong API call chain (AttributeError on every turn)
 
-Both `todo.py` and `task_types.py` have been deleted. Only `ai_task.py` remains and is properly registered via `PLATFORMS`.
+**File:** `conversation.py`, inside `async_process`
 
-**Status:** ✅ FIXED
+**The bug:**
+```python
+# ACTUAL (broken):
+response_data = await self._client.chat.completions.create_non_streaming(
+    model=model,
+    messages=messages,
+    max_tokens=max_tokens,
+    ...
+    stream=False,
+)
+```
+
+`self._client.chat` is a `ChatCompletions` instance (set in `AsyncVeniceAIClient.__init__`). `ChatCompletions` has **no `.completions` attribute** — calling `.completions` raises `AttributeError` immediately.
+
+Furthermore, `create_non_streaming` takes a **single `payload: dict`** positional argument, not keyword arguments. The correct pattern (already used in `ai_task.py`) is:
+
+```python
+# CORRECT:
+response_data = await self._client.chat.create_non_streaming({
+    "model": model,
+    "messages": messages,
+    "max_tokens": max_tokens,
+    "temperature": temperature,
+    "top_p": top_p,
+    "tools": venice_tools if venice_tools else None,
+    "stream": False,
+})
+```
+
+**Impact:** Every single conversation request fails with `AttributeError`. This is the most critical bug in the codebase.
 
 ---
 
-### 3. `manifest.json` Lists `aiohttp` as a Dependency — FIXED
+### P1-B: `manifest.json` — Hard dependency on `ai_task` breaks older HA versions
 
 **File:** `manifest.json`
-
-`aiohttp` has been removed from `requirements`. The integration now correctly relies on Home Assistant's core `httpx` support via `homeassistant.helpers.httpx_client`.
-
-**Status:** ✅ FIXED
-
----
-
-### 4. Config Flow Validation Leaks `httpx.AsyncClient` — FIXED
-
-**File:** `config_flow.py`
-
-The validation client now uses the async context manager pattern:
-
-```python
-async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
-    models_response = await client.models.list()
-```
-
-This ensures the internal `httpx.AsyncClient` is properly closed.
-
-**Status:** ✅ FIXED
-
----
-
-### 5. `ai_task` Service Accesses Internal HA Component Data — FIXED
-
-**File:** `__init__.py`
-
-The service now looks up the `VeniceAITaskEntity` instance directly from the integration's own data store (`hass.data[DOMAIN]`), set up during `ai_task.async_setup_entry`. The fallback to `hass.data.get("ai_task", {})` internals has been removed entirely.
-
-**Status:** ✅ FIXED
-
----
-
-### 6. `generate_image` Service Assumes Pydantic Model Response — FIXED
-
-**File:** `__init__.py`
-
-The response now correctly uses standard dict access:
-
-```python
-data = response.get("data", [{}])[0]
-result = dict(data)
-result.pop("b64_json", None)
-```
-
-**Status:** ✅ FIXED
-
----
-
-### 7. Duplicate Entity Files: `ai_task.py` vs `todo.py` — FIXED
-
-Both `todo.py` and `task_types.py` have been deleted. There is no longer any naming collision.
-
-**Status:** ✅ FIXED
-
----
-
-### 8. Hardcoded Model in AI Task and Todo Entities — FIXED
-
-**File:** `ai_task.py`
-
-The model is now read from the user's configured options:
-
-```python
-model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-```
-
-**Status:** ✅ FIXED
-
----
-
-### 9. Logger Naming Inconsistency — FIXED
-
-**Files:** multiple
-
-All modules now consistently use `_LOGGER = logging.getLogger(__name__)`.
-
-**Status:** ✅ FIXED
-
----
-
-### 10. Unused Constants in `const.py` — FIXED
-
-`CONF_REASONING_EFFORT` and `RECOMMENDED_REASONING_EFFORT` have been removed.
-
-**Status:** ✅ FIXED
-
----
-
-### 11. `client.py` Commented-Out Model Caching — FIXED
-
-**File:** `client.py`
-
-The `Models` class now implements a TTL cache (1 hour) keyed by `model_type`:
-
-```python
-class Models:
-    _CACHE_TTL_SECONDS = 3600  # 1 hour
-
-    async def list(self, model_type: str = "text") -> list[dict]:
-        now = time.monotonic()
-        cached = self._cache.get(model_type)
-        if cached is not None:
-            models, timestamp = cached
-            if now - timestamp < self._CACHE_TTL_SECONDS:
-                return models
-        # ...fetch and cache fresh data
-```
-
-This eliminates redundant API calls when the user repeatedly opens the options flow within the TTL window.
-
-**Status:** ✅ FIXED
-
----
-
-### 12. Inconsistent Device Info Between Platforms — FIXED
-
-**Files:** `tts.py`, `conversation.py`, `ai_task.py`, `stt.py`
-
-All platforms now use `dr.DeviceInfo` consistently with the same identifiers tuple `(DOMAIN, entry.entry_id)` and consistent fields.
-
-**Status:** ✅ FIXED
-
----
-
-### 13. Missing `Platform.STT` and `Platform.TTS` in `manifest.json` Dependencies — FIXED
-
-**File:** `manifest.json`
-
-`ai_task` has been added to `dependencies` alongside `conversation`:
 
 ```json
-"dependencies": ["conversation", "ai_task"],
+"dependencies": ["conversation", "ai_task"]
 ```
 
-**Status:** ✅ FIXED
+Every module in the integration (`__init__.py`, `ai_task.py`) conditionally imports `ai_task` with a `try/except ImportError` specifically because the component may not be available on older HA versions. However, the hard entry in `"dependencies"` makes HA require `ai_task` to be present **before** the integration loads — the conditional import never runs.
+
+On HA versions without `ai_task`, the entire integration fails to load.
+
+**Fix:** Move `ai_task` to `"after_dependencies"` (soft dependency), or remove it entirely and rely only on the runtime conditional import:
+
+```json
+"dependencies": ["conversation"],
+"after_dependencies": ["assist_pipeline", "intent", "ai_task"]
+```
 
 ---
 
-### 14. No Retry Logic or Rate Limiting in Client — FIXED
+### P1-C: `coordinator.py` — `update_interval` passed as `int` instead of `timedelta`
 
-**File:** `client.py`
+**File:** `coordinator.py`
 
-Added `_async_request_with_retry()` to `AsyncVeniceAIClient` with exponential backoff for retryable HTTP status codes (429, 500, 502, 503) and transient network errors (timeout, network error, protocol error). 3 retries with base delay of 1s and max delay of 30s.
+```python
+UPDATE_INTERVAL_SECONDS = 3600  # int
 
-**Status:** ✅ FIXED
+super().__init__(
+    hass,
+    _LOGGER,
+    name="Venice AI",
+    update_interval=UPDATE_INTERVAL_SECONDS,  # ← should be timedelta
+)
+```
 
----
+`DataUpdateCoordinator` expects `update_interval` to be a `datetime.timedelta`. Passing a bare `int` causes a `TypeError` when the coordinator tries to compute the next scheduled update (`timedelta + int` is not defined).
 
-### 15. `STT.async_process_audio_stream` Is Not Truly Streaming — FIXED
+**Fix:**
+```python
+from datetime import timedelta
 
-**File:** `stt.py`
-
-The STT entity now accumulates incoming audio chunks into a `bytearray`, then sends the complete buffer in a single POST request. Updated `stt.py` to use a consistent buffer and set `stream=False`.
-
-**Status:** ✅ FIXED
-
----
-
-### 16. Hardcoded Base URL in `__init__.py` — FIXED
-
-The explicit `base_url` parameter has been removed from `AsyncVeniceAIClient` instantiation in `async_setup_entry`. The client now uses its own default.
-
-**Status:** ✅ FIXED
-
----
-
-### 17. STT Doesn't Validate Audio Format Before Processing — FIXED
-
-**File:** `stt.py`
-
-The STT entity now validates the `metadata` parameter against its declared supported format (`WAV`, `PCM`, 16000 Hz, 16-bit, mono) and returns `SpeechResult` with `SpeechResultState.ERROR` if the format doesn't match.
-
-**Status:** ✅ FIXED
+super().__init__(
+    hass,
+    _LOGGER,
+    name="Venice AI",
+    update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
+)
+```
 
 ---
 
-### 18. TTS `supported_languages` Is Overly Restrictive — FIXED
+### P1-D: `tts.py` — Unexpected `streaming` kwarg causes `TypeError`
 
-**Files:** `tts.py`, `stt.py`
+**File:** `tts.py`, `async_get_tts_audio`
 
-Both now return `["en", "zh", "fr", "hi", "it", "ja", "pl", "es"]` reflecting Venice AI's kokoro TTS and parakeet STT multilingual capabilities.
+```python
+audio_data = await self._client.speech.generate(
+    text=message,
+    voice=voice,
+    model=model,
+    audio_output=response_format,
+    speed=speed,
+    streaming=False,   # ← not in Speech.generate() signature
+)
+```
 
-**Status:** ✅ FIXED
+`Speech.generate()` in `client.py` has the signature:
+```python
+async def generate(self, text, voice, model, audio_output, speed) -> bytes:
+```
+
+There is no `streaming` parameter. This raises `TypeError: generate() got an unexpected keyword argument 'streaming'` on every TTS request.
+
+**Fix:** Remove the `streaming=False` kwarg from the call.
 
 ---
 
-### 19. TTS `supported_options` Uses Non-Standard Option Names — FIXED
+## 🟠 Priority 2 — High Severity (Feature Gaps / Silent Failures)
+
+### P2-A: `conversation.py` — No conversation history across turns
+
+**File:** `conversation.py`, `async_process`
+
+A fresh `ChatLog` is created on every call, seeded only with the current user message:
+
+```python
+chat_log = ChatLog(
+    conversation_id=user_input.conversation_id or ulid_util.ulid_now(),
+    content=[UserContent(content=user_input.text)],
+)
+```
+
+The `conversation_id` from the user input is passed in but the associated history is never retrieved. The result: every turn is stateless. A user asking "What's the temperature in the living room?" followed by "Turn it up by 2 degrees" will fail — the model has no memory of the previous exchange.
+
+**Fix:** Use HA's `ChatLog` persistence mechanism. The conversation framework provides ways to retrieve and append to an existing log via the conversation ID. At minimum, maintain a `dict[str, list]` store keyed by `conversation_id` within the entity's lifecycle.
+
+---
+
+### P2-B: `conversation.py` — `llm.async_get_api` missing required `llm_context` argument
+
+**File:** `conversation.py`, `async_process`
+
+```python
+api = await llm.async_get_api(self.hass, llm_api)
+```
+
+The HA LLM helper signature is:
+```python
+async def async_get_api(hass, api_id, llm_context: LLMContext) -> API
+```
+
+The `llm_context` argument is **required** and carries the conversation context (language, device ID, assistant ID, etc.) that tool calls depend on. Calling without it raises `TypeError`. Any user who configures a HASS LLM API for device control will hit this.
+
+**Fix:**
+```python
+llm_context = llm.LLMContext(
+    platform=DOMAIN,
+    context=user_input.context,
+    user_prompt=user_input.text,
+    language=user_input.language,
+    assistant=conversation.DOMAIN,
+    device_id=user_input.device_id,
+)
+api = await llm.async_get_api(self.hass, llm_api, llm_context)
+```
+
+---
+
+### P2-C: `conversation.py` — Tool calls missing from `AssistantContent` in history
+
+**File:** `conversation.py`, tool-call loop
+
+When the model returns tool calls, the code builds an `AssistantContent` with only the text fragment:
+
+```python
+assistant_content = AssistantContent(
+    agent_id="venice_ai",
+    content=text_content,
+)
+chat_log.content.append(assistant_content)
+```
+
+The tool call details (id, name, arguments) are not stored in the chat log. Many OpenAI-compatible APIs (and HA's own tool result pairing logic) require that the assistant message preceding a tool result includes the tool_calls array. Without it, re-sending the conversation history to the API omits the call–result pairing and can confuse the model or violate the API contract.
+
+**Fix:** Store tool call metadata in the `AssistantContent` or append a raw assistant dict to the message list before tool results.
+
+---
+
+## 🟡 Priority 3 — Medium Severity (UX / Correctness Issues)
+
+### P3-A: `stt.py` — Options captured at setup, not updated on options change
+
+**File:** `stt.py`, `async_setup_entry` and `VeniceAISTT.__init__`
+
+```python
+entity = VeniceAISTT(
+    entry,
+    entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
+    entry.options.get(CONF_STT_RESPONSE_FORMAT, RECOMMENDED_STT_RESPONSE_FORMAT),
+    entry.options.get(CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS),
+)
+```
+
+These values are stored as `self._model`, etc. at construction time. No `entry.add_update_listener` is registered in the STT entity. If the user changes options, the STT entity continues using the old values until a full HA restart.
+
+**Fix:** Read from `self.entry.options` dynamically inside `async_process_audio_stream`, same pattern as `VeniceAITTS` and the conversation entity.
+
+---
+
+### P3-B: `config_flow.py` — `CONF_LLM_HASS_API` accepts arbitrary strings
+
+**File:** `config_flow.py`, `_build_options_schema`
+
+```python
+vol.Optional(CONF_LLM_HASS_API, ...): cv.string,
+```
+
+This renders a plain text input for an identifier that should be selected from a known list. Users must type the internal HA LLM API ID exactly — there's no discovery, no validation, and no indication of valid values.
+
+**Fix:** Populate a `SelectSelector` from `llm.async_get_apis(hass)` (or `llm.async_get_api_list`) and include an empty/none option for "no LLM API":
+
+```python
+llm_apis = [
+    SelectOptionDict(label=api.name, value=api.id)
+    for api in await llm.async_get_api_list(hass)
+]
+# Add a "None" option
+llm_apis.insert(0, SelectOptionDict(label="None", value=""))
+vol.Optional(CONF_LLM_HASS_API, ...): SelectSelector(
+    SelectSelectorConfig(options=llm_apis, mode=SelectSelectorMode.DROPDOWN)
+),
+```
+
+---
+
+### P3-C: `conversation.py` — `_trim_chat_log` mutates `chat_log.content` directly
+
+**File:** `conversation.py`, `_trim_chat_log`
+
+```python
+chat_log.content = trimmed
+```
+
+`ChatLog.content` in HA's conversation module is typically a plain list that can be mutated, but direct attribute replacement may not survive across all HA versions if it becomes a property with no setter. More importantly, this silently discards tool-call context mid-conversation and creates potential pairing issues between `AssistantContent` and `ToolResultContent`.
+
+**Recommendation:** Replace with in-place mutation (`chat_log.content[:] = trimmed`) and add a guard that never trims in the middle of an incomplete tool call sequence.
+
+---
+
+### P3-D: `conversation.py` — `supported_languages` hardcoded, inconsistent with TTS/STT
+
+**File:** `conversation.py`
+
+The conversation entity returns a fixed list: `["en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "zh"]`. This list differs from TTS and STT (which return `["en", "zh", "fr", "hi", "it", "ja", "pl", "es"]`) and is not model-driven. For a true multi-language AI integration, this should either return `MATCH_ALL` (wildcard) or be driven by the selected model's capabilities.
+
+**Fix:**
+```python
+from homeassistant.components.conversation import MATCH_ALL
+
+@property
+def supported_languages(self) -> list[str]:
+    return MATCH_ALL
+```
+
+---
+
+## 🔵 Priority 4 — Low Severity / Design Quality
+
+### P4-A: `repairs.py` — Redundant API call on every setup
+
+**File:** `repairs.py`, `_async_check_and_create_issues`
+
+Every time the integration loads, `async_setup_repairs` creates a **new, separate** `AsyncVeniceAIClient` and calls `client.models.list()` purely to check connectivity — this is identical to the check already performed in `async_setup_entry`. This creates an extra uncached HTTP call and a second `httpx.AsyncClient` lifecycle that must be closed manually (it is closed, but only because of the `finally` block — there's no `async with` safety net here).
+
+**Fix:** Pass the already-validated `AsyncVeniceAIClient` into `async_setup_repairs`, or simply skip the connectivity check in repairs (it was already done during setup; a failure there would have raised `ConfigEntryNotReady` and prevented loading).
+
+---
+
+### P4-B: `__init__.py` — `generate_data` service calls private entity method
+
+**File:** `__init__.py`
+
+```python
+result = await ai_task_entity._async_generate_data(gen_task, chat_log)
+```
+
+Calling `_async_generate_data` directly on the entity bypasses HA's normal entity dispatch and is brittle against internal refactors of `AITaskEntity`. Services should invoke AI task entities through the HA service/platform machinery, not by reaching into private methods.
+
+---
+
+### P4-C: `tts.py` — CRLF line endings (`\r\n`)
 
 **File:** `tts.py`
 
-Consolidated options to use standard HA TTS constants (`ATTR_VOICE`, `ATTR_AUDIO_OUTPUT`) alongside `tts_model` and `tts_speed`. Removed redundant `"tts_voice"` and `"tts_response_format"` duplicates. `default_options` now reads from config entry options.
-
-**Status:** ✅ FIXED
+The file uses Windows CRLF line endings while all other files use LF. This is a minor inconsistency but can cause diff noise and occasional issues with Python tooling on strict environments.
 
 ---
 
-### 20. `strings.json` Missing TTS/STT Option Labels — FIXED
+### P4-D: `manifest.json` — `voluptuous_openapi` not in `requirements`
 
-**File:** `strings.json`
+**File:** `manifest.json`
 
-The options step `"init"` now includes labels for:
-- `tts_model`, `tts_voice`, `tts_response_format`, `tts_speed`
-- `stt_model`, `stt_response_format`, `stt_timestamps`
-
-**Fix:** Added TTS/STT option labels to `strings.json`.
-
-**Status:** ✅ FIXED
-
----
-
-### 21. `icons.json` Is Incomplete — FIXED
-
-**File:** `icons.json`
-
-Added the `ai_task` service icon alongside the existing `generate_image` icon.
-
-**Status:** ✅ FIXED
-
----
-
-### 22. No `async_migrate_entry` for Config Flow Version Migrations — FIXED
-
-**File:** `config_flow.py`
-
-Added `async_migrate_entry` classmethod to `VeniceAIConfigFlow` to handle future version upgrades gracefully. Currently returns `True` for version 1 (current version) and logs an error for unknown versions.
-
-```python
-async def async_migrate_entry(
-    self, hass: HomeAssistant, entry: ConfigEntry
-) -> bool:
-    if entry.version == 1:
-        return True
-    _LOGGER.error(
-        "Unable to migrate config entry from version %s. Please recreate the integration.",
-        entry.version,
-    )
-    return False
+```json
+"requirements": []
 ```
 
-**Status:** ✅ FIXED
->>>>+++ REPLACE
-
+`voluptuous_openapi` is used when present and logged as missing when absent. However, since it's not listed in `requirements`, HACS and HA won't install it automatically. Users who want full LLM tool schema conversion (which is needed for device control) must install it manually. This should either be added as a requirement or the warning message should be much more prominent — ideally surfaced as a repair issue.
 
 ---
 
-### 23. `hacs.json` Is Minimal — FIXED
+### P4-E: No test suite
 
-**File:** `hacs.json`
-
-Expanded with recommended metadata (`content_in_root`, `zip_release`).
-
-**Status:** ✅ FIXED
+The integration has zero test coverage. Given the number of runtime bugs found in a post-"all fixed" review, tests would catch regressions immediately. The HA test harness (`pytest-homeassistant-custom-component`) makes it straightforward to add `tests/` covering the conversation loop, tool dispatch, config flow validation, and TTS/STT round-trips.
 
 ---
 
-### 24. Conversation Tool Loop — Full ChatLog Re-conversion — FIXED
+## Summary Table
 
-**File:** `conversation.py`
-
-The tool loop now re-converts the entire `chat_log.content` each iteration via `_convert_chat_log_to_venice_messages(chat_log, system_prompt, strip_thinking=strip_thinking)`. This is correct and simple, building a fresh messages list from the full conversation history every time.
-
-**Status:** ✅ FIXED
-
----
-
-### 25. `_make_schema_hashable` Uses Fragile Class Name Detection — FIXED
-
-**File:** `conversation.py`
-
-Changed from fragile string-based class name detection:
-```python
-if hasattr(obj, "__class__") and "Selector" in obj.__class__.__name__:
-```
-
-to a robust `isinstance` check against the HA selector base class:
-```python
-if isinstance(obj, selector.Selector):
-```
-
-The `selector` module is now imported from `homeassistant.helpers`.
-
-**Status:** ✅ FIXED
->>>>+++ REPLACE
-
+| ID | File | Severity | Description |
+|---|---|---|---|
+| **P1-A** | `conversation.py` | 🔴 Critical | `chat.completions.create_non_streaming(...)` — wrong chain + wrong args → `AttributeError` every turn |
+| **P1-B** | `manifest.json` | 🔴 Critical | Hard `"dependencies": ["ai_task"]` breaks load on older HA versions |
+| **P1-C** | `coordinator.py` | 🔴 Critical | `update_interval=int` instead of `timedelta` → `TypeError` |
+| **P1-D** | `tts.py` | 🔴 Critical | Unexpected `streaming=False` kwarg → `TypeError` on every TTS request |
+| **P2-A** | `conversation.py` | 🟠 High | Fresh `ChatLog` per request — no multi-turn history |
+| **P2-B** | `conversation.py` | 🟠 High | `llm.async_get_api` missing `llm_context` → device control broken |
+| **P2-C** | `conversation.py` | 🟠 High | Tool calls not stored in assistant message history |
+| **P3-A** | `stt.py` | 🟡 Medium | STT options frozen at setup, not updated on options change |
+| **P3-B** | `config_flow.py` | 🟡 Medium | `CONF_LLM_HASS_API` free-text instead of selector |
+| **P3-C** | `conversation.py` | 🟡 Medium | `_trim_chat_log` direct attribute assignment; may break tool result pairs |
+| **P3-D** | `conversation.py` | 🟡 Medium | `supported_languages` hardcoded; mismatches TTS/STT and isn't model-aware |
+| **P4-A** | `repairs.py` | 🔵 Low | Duplicate API call on every setup |
+| **P4-B** | `__init__.py` | 🔵 Low | `ai_task` service calls private `_async_generate_data` directly |
+| **P4-C** | `tts.py` | 🔵 Low | CRLF line endings in one file |
+| **P4-D** | `manifest.json` | 🔵 Low | `voluptuous_openapi` absent from `requirements` |
+| **P4-E** | *(all)* | 🔵 Low | No test suite |
 
 ---
 
-### 26. `client.py` — `Speech.generate()` Has Conflicting `response_format` Parameter — FIXED
+## Recommended Fix Order
 
-**Files:** `client.py`, `tts.py`
-
-The parameter name has been changed from `response_format` to `audio_output` to align with HA TTS conventions. The API key sent to Venice AI remains `response_format`.
-
-**Status:** ✅ FIXED
-
----
-
-### 27. Conversation `async_internal_added_to_hass` Overrides Internal Method — FIXED
-
-**File:** `conversation.py`
-
-The method was renamed from `async_internal_added_to_hass` to the standard `async_added_to_hass` used by Home Assistant entity lifecycle callbacks. This ensures the update listener is properly registered when the entity is added to Home Assistant.
-
-**Status:** ✅ FIXED
-
----
-
-### 28. `Voluptuous-OpenAPI` Dependency Is Optional — FIXED
-
-**File:** `__init__.py`
-
-Added a setup-time warning in `async_setup()` when `voluptuous_openapi` is not available. This informs users that LLM tool schema conversion will be limited and provides the pip install command to fix it.
-
-```python
-if not _HAS_VOLUPTUOUS_OPENAPI:
-    _LOGGER.warning(
-        "voluptuous-openapi is not installed. LLM tool schema conversion "
-        "will be limited. Install with: pip install voluptuous-openapi"
-    )
-```
-
-**Status:** ✅ FIXED
->>>>+++ REPLACE
-
-
----
-
-### 29. No Tests Present — OUT OF SCOPE
-
-The repository contains no test files. Adding a full test suite for a Home Assistant custom component is a significant undertaking and is considered out of scope for this review cycle.
-
-**Status:** ⚪ OUT OF SCOPE
-
----
-
-## 📋 Summary of Files and Their Status
-
-| File | Status | Key Issues |
-|---|---|---|
-| `__init__.py` | ✅ Fixed | `ai_task` service no longer uses `hass.data` internals |
-| `client.py` | ✅ Fixed | TTL model caching and retry logic implemented |
-| `config_flow.py` | ✅ Fixed | Resource leak fixed with async context manager |
-| `const.py` | ✅ Fixed | Unused constants removed |
-| `conversation.py` | ✅ Fixed | `async_added_to_hass` method fixed |
-| `tts.py` | ✅ Fixed | Languages expanded, options consolidated |
-| `stt.py` | ✅ Fixed | Uses `bytearray` buffer, validates audio format |
-| `ai_task.py` | ✅ Fixed | Model now read from options, uses `dr.DeviceInfo` |
-| `todo.py` | ✅ Deleted | Dead code removed |
-| `task_types.py` | ✅ Deleted | Dead code removed |
-| `manifest.json` | ✅ Fixed | `ai_task` dependency added |
-| `services.yaml` | 🟡 Acceptable | Missing icon reference for `ai_task` |
-| `strings.json` | ✅ Fixed | TTS/STT option labels added |
-| `icons.json` | ✅ Fixed | `ai_task` service icon added |
-| `hacs.json` | ✅ Fixed | Expanded with recommended metadata |
-
----
-
-## CRIT-2 Fix — `client.close` registered as synchronous `async_on_unload` callback
-
-**File:** `__init__.py`
-
-**Issue:** `entry.async_on_unload(client.close)` registered an async coroutine function (`async def close`) as a synchronous callback. `async_on_unload` accepts `Callable[[], None]` — it cannot await coroutines. HA would call `client.close()`, receive a coroutine object, and discard it, leaking the underlying `httpx.AsyncClient` session on every reload/unload.
-
-**Fix applied (Option B — preferred):**
-- Removed `entry.async_on_unload(client.close)` from `async_setup_entry`.
-- Added explicit `await client.close()` in `async_unload_entry` after platforms and repairs are unloaded.
-- Updated docstring in `async_unload_entry` to explain why explicit cleanup is necessary.
-
-This ensures the httpx client is always properly awaited and closed during teardown, eliminating the silent resource leak.
-
-**Status:** ✅ FIXED
-
----
-
-## CRIT-3 Fix — Service handler directly calls private entity method
-
-**File:** `__init__.py`, `ai_task.py`
-
-**Issue:** The `generate_data` service handler in `__init__.py` called `ai_task_entity._async_generate_data(gen_task, chat_log)` — a private/protected method on the entity. This anti-pattern:
-- Bypasses HA's entity locking and any platform-level lifecycle checks.
-- Breaks encapsulation — if HA renames or changes the internal method, the service fails.
-- Risks race conditions from concurrent service calls.
-
-**Fix applied:**
-- Added a public `async_generate_data()` method in `VeniceAITaskEntity` (`ai_task.py`) that delegates to the existing `_async_generate_data()` implementation.
-- Updated the service handler in `__init__.py` to call `ai_task_entity.async_generate_data(gen_task, chat_log)` instead of the private method.
-- Added a docstring to the public method explaining it is the intended entry-point for service handlers and the HA ai_task platform.
-
-This respects the entity's public contract, preserves encapsulation, and ensures any future platform-level locking or validation in `async_generate_data` will be honored.
-
-**Status:** ✅ FIXED
-
----
-
-## CRIT-4 Fix — `async_migrate_entry` signature mismatch
-
-**File:** `config_flow.py`
-
-**Issue:** `VeniceAIConfigFlow.async_migrate_entry` was defined as an instance method receiving `self`, but Home Assistant's core signature for `ConfigFlow.async_migrate_entry` is a **static method** that does not receive `self`:
-
-```python
-@staticmethod
-async def async_migrate_entry(hass, config_entry) -> bool:
-```
-
-Having `self` in the signature meant HA would pass the wrong arguments — when migration is triggered (e.g., on a version bump), the call would either fail with a `TypeError` or silently skip migration. Even though there is currently only version 1, this was a latent breaking defect.
-
-**Fix applied:**
-- Added `@staticmethod` decorator to `async_migrate_entry`.
-- Removed `self` from the parameter list.
-- Updated the docstring to document why the static-method signature is required.
-
-This ensures the method signature matches HA's core contract, so migration will work correctly if the config entry version is ever bumped in a future release.
-
-**Status:** ✅ FIXED
-
----
-
-## 🏗️ Recommended Priority Fix Order
-
-1. **Add `ai_task` to `manifest.json` dependencies** — ✅ DONE
-2. **Fix `ai_task` service fallback** — ✅ DONE
-3. **Standardize device info** — ✅ DONE
-4. **Standardize loggers** — ✅ DONE
-5. **Add model caching** — ✅ DONE
-6. **Add TTS/STT strings to `strings.json`** — ✅ DONE
-7. **Add `ai_task` icon to `icons.json`** — ✅ DONE
-8. **Expand `hacs.json`** — ✅ DONE
-9. **Fix conversation tool loop** — use full chat_log re-conversion (next priority)
-10. **Add retry logic** — ✅ DONE
-11. **Add tests** — ensure correctness and prevent regressions
+1. **Fix P1-A first** — conversation is completely broken; nothing works without this.
+2. **Fix P1-B** — prevents loading on older HA entirely.
+3. **Fix P1-C and P1-D** — coordinator and TTS broken on first run.
+4. **Fix P2-B** — device control (`llm_api`) will fail silently with a `TypeError`.
+5. **Fix P2-A** — multi-turn conversations work but are stateless; every turn starts fresh.
+6. **Fix P2-C** — tool call history is malformed; may cause model confusion in multi-step tasks.
+7. **Fix P3-A and P3-B** — UX improvements for options management.
+8. **Address P4-x** — cleanup and quality improvements.

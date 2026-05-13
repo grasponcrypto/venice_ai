@@ -251,36 +251,29 @@ class VeniceAIOptionsFlow(OptionsFlow):
                         type(text_resp).__name__,
                     )
 
-                _LOGGER.debug("Fetching audio models for options flow")
-                audio_resp = await client.models.list(model_type="audio")
-                if isinstance(audio_resp, list):
-                    # Prefer API type field; fall back to prefix matching for
-                    # backwards compatibility (MIN-4 fix).
-                    tts_raw = [
-                        m
-                        for m in audio_resp
-                        if m.get("type") == "tts" or m.get("id", "").startswith("tts-")
-                    ]
-                    stt_raw = [
-                        m
-                        for m in audio_resp
-                        if m.get("type") == "stt"
-                        or m.get("id", "").startswith("stt-")
-                        or "parakeet" in m.get("id", "")
-                    ]
+                _LOGGER.debug("Fetching TTS models for options flow")
+                tts_resp = await client.models.list(model_type="tts")
+                if isinstance(tts_resp, list):
                     tts_options = [
                         SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
-                        for m in tts_raw
+                        for m in tts_resp
                         if m.get("id")
                     ]
+                    _LOGGER.debug("Found %d TTS models", len(tts_options))
+                else:
+                    _LOGGER.debug("No TTS models returned or invalid response")
+
+                _LOGGER.debug("Fetching ASR models for options flow")
+                asr_resp = await client.models.list(model_type="asr")
+                if isinstance(asr_resp, list):
                     stt_options = [
                         SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
-                        for m in stt_raw
+                        for m in asr_resp
                         if m.get("id")
                     ]
-                    _LOGGER.debug("Found %d TTS / %d STT models", len(tts_options), len(stt_options))
+                    _LOGGER.debug("Found %d STT models", len(stt_options))
                 else:
-                    _LOGGER.debug("No audio models returned or invalid response")
+                    _LOGGER.debug("No ASR models returned or invalid response")
 
         except AuthenticationError:
             _LOGGER.error("Authentication error fetching models for options flow")

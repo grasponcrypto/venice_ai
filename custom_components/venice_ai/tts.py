@@ -137,7 +137,6 @@ class VeniceAITTS(TextToSpeechEntity):
             model=model,
             audio_output=response_format,
             speed=speed,
-            streaming=False
         )
         _LOGGER.debug(
             "Received raw audio data from API: %d bytes",
