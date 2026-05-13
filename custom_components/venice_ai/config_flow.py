@@ -37,6 +37,8 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
+    CONF_DISABLE_THINKING,
+    RECOMMENDED_DISABLE_THINKING,
     CONF_TTS_MODEL,
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
@@ -363,6 +365,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_STRIP_THINKING_RESPONSE,
                     description={"suggested_value": options.get(CONF_STRIP_THINKING_RESPONSE, False)},
+                ): BooleanSelector(),
+                vol.Optional(
+                    CONF_DISABLE_THINKING,
+                    description={"suggested_value": options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)},
                 ): BooleanSelector(),
                 vol.Optional(
                     CONF_MAX_TOOL_ITERATIONS,

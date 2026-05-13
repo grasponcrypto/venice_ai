@@ -37,6 +37,8 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
+    CONF_DISABLE_THINKING,
+    RECOMMENDED_DISABLE_THINKING,
     DOMAIN,
     HAS_VOLUPTUOUS_OPENAPI,
     MAX_CHAT_HISTORY_SIZE,
@@ -58,6 +60,33 @@ DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant controlling a smart ho
 
 # Maximum number of tool iterations to prevent infinite loops
 MAX_TOOL_ITERATIONS = 5
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove <think>…</think> (or  thinking… end of thinking ) blocks from model output.
+
+    Handles both the XML-style tags used by some reasoning models and the
+    literal `` thinking`` / `` end of thinking`` markers emitted by Venice AI.
+    """
+    if not text:
+        return text
+    # XML-style <think>…</think>
+    while True:
+        start = text.lower().find("<think>")
+        if start == -1:
+            break
+        end = text.lower().find("</think>", start)
+        if end == -1:
+            # unmatched open tag – strip to end to be safe
+            text = text[:start].strip()
+            break
+        text = text[:start] + text[end + 8:]
+    # Venice-style  thinking… end of thinking
+    if " thinking" in text:
+        parts = text.split(" end of thinking")
+        if len(parts) > 1:
+            text = parts[-1].strip()
+    return text.strip()
 
 
 def _convert_schema_to_hashable(obj: Any) -> Any:
@@ -190,11 +219,7 @@ def _convert_chat_log_to_venice_messages(
         if isinstance(msg, UserContent):
             messages.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AssistantContent):
-            content = msg.content
-            if strip_thinking and "<think>" in content:
-                parts = content.split("</think>")
-                if len(parts) > 1:
-                    content = parts[-1].strip()
+            content = _strip_thinking(msg.content) if strip_thinking else msg.content
             messages.append({"role": "assistant", "content": content})
         elif isinstance(msg, ToolResultContent):
             messages.append({
@@ -292,7 +317,7 @@ class VeniceAIConversationEntity(ConversationEntity):
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS]
+        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS, CONF_STRIP_THINKING_RESPONSE, CONF_DISABLE_THINKING]
 
     async def async_process(
         self, user_input: ConversationInput
@@ -373,6 +398,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                     _LOGGER.error("Message list is empty before sending to API.")
                     raise HomeAssistantError("Message list is empty before sending to API.")
 
+                disable_thinking = options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
+                venice_params: dict[str, Any] | None = None
+                if disable_thinking:
+                    venice_params = {"disable_thinking": True}
                 response_data = await self._client.chat.completions.create_non_streaming(
                     model=model,
                     messages=messages,
@@ -380,6 +409,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     temperature=temperature,
                     top_p=top_p,
                     tools=venice_tools if venice_tools else None,
+                    venice_parameters=venice_params,
                     stream=False,
                 )
                 if not isinstance(response_data, dict):
@@ -412,6 +442,8 @@ class VeniceAIConversationEntity(ConversationEntity):
                     raise HomeAssistantError("Received invalid message format")
 
                 text_content = message.get("content", "")
+                if strip_thinking:
+                    text_content = _strip_thinking(text_content)
                 tool_calls = message.get("tool_calls", [])
 
                 if not tool_calls:

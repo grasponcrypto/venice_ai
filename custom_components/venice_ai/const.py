@@ -26,6 +26,8 @@ RECOMMENDED_TEMPERATURE = 1.0
 
 # Venice AI reasoning model options
 CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
+CONF_DISABLE_THINKING = "disable_thinking"
+RECOMMENDED_DISABLE_THINKING = False
 
 # Venice AI TTS options
 CONF_TTS_MODEL = "tts_model"
