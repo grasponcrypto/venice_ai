@@ -9,6 +9,7 @@ import uuid
 import voluptuous as vol
 
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
@@ -25,7 +26,8 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
-from homeassistant.helpers import config_validation as cv, selector
+from homeassistant.helpers import config_validation as cv, issue_registry as ir, selector
+from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import conversation
@@ -38,7 +40,22 @@ except ImportError:
     _HAS_AI_TASK = False
 
 from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
-from .const import DOMAIN, HAS_VOLUPTUOUS_OPENAPI
+
+# Backwards-compatible import: older client.py may not define RateLimitError
+try:
+    from .client import RateLimitError
+except ImportError:
+    RateLimitError = None  # type: ignore[misc, assignment]
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_TTS_MODEL,
+    CONF_STT_MODEL,
+    DOMAIN,
+    HAS_VOLUPTUOUS_OPENAPI,
+    RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_STT_MODEL,
+)
 from .coordinator import VeniceAIDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +69,16 @@ if _HAS_AI_TASK:
         PLATFORMS.append(ai_task_platform)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# ── Repair issue ID templates ────────────────────────────────────────────────
+_ISSUE_DEPRECATED = "deprecated_model_{entry_id}_{model_key}"
+_ISSUE_UNAVAIL = "unavailable_model_{entry_id}_{model_key}"
+_ISSUE_AUTH = "auth_failure_{entry_id}"
+_ISSUE_API_DOWN = "api_unavailable_{entry_id}"
+_ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
+
+# Map deprecated model IDs → recommended replacements (update as needed).
+_DEPRECATED_MODELS: dict[str, str] = {}
 
 
 @dataclass
@@ -225,48 +252,200 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Set up the repairs platform for a config entry.
+@callback
+def _async_on_coordinator_update(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: Any
+) -> None:
+    """Create or clear auth/API-availability repair issues based on coordinator state."""
+    entry_id = entry.entry_id
+    ir.async_delete_issue(hass, DOMAIN, _ISSUE_AUTH.format(entry_id=entry_id))
+    ir.async_delete_issue(hass, DOMAIN, _ISSUE_API_DOWN.format(entry_id=entry_id))
+    ir.async_delete_issue(hass, DOMAIN, _ISSUE_RATE_LIMIT.format(entry_id=entry_id))
 
-    Also registers a coordinator listener so that auth/API-availability repair
-    issues are created/cleared automatically on every coordinator refresh,
-    without any extra network calls (CRIT-2 fix).
-    """
-    try:
-        from .repairs import (
-            async_setup_entry as async_setup_repairs_entry,
-            async_handle_coordinator_update,
+    last_exc = coordinator.last_exception
+    if last_exc is None:
+        _LOGGER.debug(
+            "Coordinator update succeeded for entry %s; connectivity issues cleared",
+            entry_id,
+        )
+        return
+
+    cause = getattr(last_exc, "__cause__", None) or last_exc
+
+    if isinstance(cause, AuthenticationError):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _ISSUE_AUTH.format(entry_id=entry_id),
+            is_fixable=False,
+            is_persistent=True,
+            severity=IssueSeverity.ERROR,
+            translation_key="auth_failure",
+            translation_placeholders={"entry_title": entry.title},
+        )
+        _LOGGER.warning(
+            "Coordinator auth failure for entry %s — repair issue created", entry_id
+        )
+    elif RateLimitError is not None and isinstance(cause, RateLimitError):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _ISSUE_RATE_LIMIT.format(entry_id=entry_id),
+            is_fixable=False,
+            is_persistent=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="rate_limited",
+            translation_placeholders={"entry_title": entry.title},
+        )
+        _LOGGER.warning(
+            "Coordinator rate limit for entry %s — repair issue created", entry_id
+        )
+    else:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _ISSUE_API_DOWN.format(entry_id=entry_id),
+            is_fixable=False,
+            is_persistent=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="api_unavailable",
+            translation_placeholders={
+                "entry_title": entry.title,
+                "error": str(cause),
+            },
+        )
+        _LOGGER.warning(
+            "Coordinator API error for entry %s — repair issue created: %s",
+            entry_id,
+            cause,
         )
 
-        await async_setup_repairs_entry(hass, entry)
 
-        # Register coordinator listener — fires after every refresh cycle.
-        # The listener is a no-arg callback; we close over hass, entry, and
-        # the coordinator so repairs.async_handle_coordinator_update can inspect
-        # coordinator.last_exception without making its own network calls.
-        coordinator = entry.runtime_data.coordinator
+async def _async_create_model_issues(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Check the Venice AI configuration and create repair issues as needed."""
+    entry_id = entry.entry_id
+    options = entry.options
+    runtime_data = entry.runtime_data
+    coordinator = getattr(runtime_data, "coordinator", None)
 
-        @callback
-        def _on_coordinator_update() -> None:
-            async_handle_coordinator_update(hass, entry, coordinator)
+    available_text_models: set[str] = set()
+    available_audio_models: set[str] = set()
+    if coordinator and coordinator.data:
+        available_text_models = {
+            m.get("id", "")
+            for m in coordinator.data.get("text_models", [])
+            if isinstance(m, dict)
+        }
+        available_audio_models = {
+            m.get("id", "")
+            for m in coordinator.data.get("audio_models", [])
+            if isinstance(m, dict)
+        }
+        _LOGGER.debug(
+            "Repair check using coordinator data: %d text models, %d audio models",
+            len(available_text_models),
+            len(available_audio_models),
+        )
 
-        entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
-    except ImportError:
-        _LOGGER.debug("Repairs platform not available in this HA version")
-    except Exception:
-        _LOGGER.exception("Unexpected error during repairs setup")
+    configured_models = {
+        CONF_CHAT_MODEL: (
+            options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            available_text_models,
+        ),
+        CONF_TTS_MODEL: (
+            options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
+            available_audio_models,
+        ),
+        CONF_STT_MODEL: (
+            options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
+            available_audio_models,
+        ),
+    }
+
+    for model_key, (current_model, available_set) in configured_models.items():
+        if current_model in _DEPRECATED_MODELS:
+            issue_id = _ISSUE_DEPRECATED.format(
+                entry_id=entry_id, model_key=model_key
+            )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                is_persistent=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="deprecated_model",
+                translation_placeholders={
+                    "model": current_model,
+                    "replacement": _DEPRECATED_MODELS[current_model],
+                },
+            )
+            _LOGGER.debug(
+                "Created repair issue for deprecated model %s in entry %s",
+                current_model,
+                entry_id,
+            )
+            continue
+
+        if available_set and current_model not in available_set:
+            issue_id = _ISSUE_UNAVAIL.format(
+                entry_id=entry_id, model_key=model_key
+            )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                is_persistent=False,
+                severity=IssueSeverity.ERROR,
+                translation_key="unavailable_model",
+                translation_placeholders={
+                    "model": current_model,
+                    "model_type": model_key.replace("_model", "").upper(),
+                },
+            )
+            _LOGGER.warning(
+                "Created repair issue for unavailable model %s (%s) in entry %s",
+                current_model,
+                model_key,
+                entry_id,
+            )
+
+
+async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Set up repair issues for a config entry."""
+    await _async_create_model_issues(hass, entry)
+
+    coordinator = entry.runtime_data.coordinator
+
+    @callback
+    def _on_coordinator_update() -> None:
+        _async_on_coordinator_update(hass, entry, coordinator)
+
+    entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
 
 
 async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Unload the repairs platform for a config entry."""
-    try:
-        from .repairs import async_unload_entry as async_unload_repairs_entry
-
-        await async_unload_repairs_entry(hass, entry)
-    except ImportError:
-        _LOGGER.debug("Repairs platform not available in this HA version")
-    except Exception:
-        _LOGGER.exception("Unexpected error during repairs unload")
+    """Unload repair issues for a config entry."""
+    entry_id = entry.entry_id
+    registry = ir.async_get(hass)
+    issues = [
+        _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=CONF_CHAT_MODEL),
+        _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=CONF_TTS_MODEL),
+        _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=CONF_STT_MODEL),
+        _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_CHAT_MODEL),
+        _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_TTS_MODEL),
+        _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_STT_MODEL),
+        _ISSUE_AUTH.format(entry_id=entry_id),
+        _ISSUE_API_DOWN.format(entry_id=entry_id),
+        _ISSUE_RATE_LIMIT.format(entry_id=entry_id),
+    ]
+    for issue_id in issues:
+        if registry.async_get_issue(DOMAIN, issue_id):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+            _LOGGER.debug("Deleted repair issue %s", issue_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
