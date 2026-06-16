@@ -6,11 +6,57 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import httpx
 
 _LOGGER = logging.getLogger(__name__)
+
+# Import retry / timeout constants; fall back to hard-coded defaults when
+# const.py is not yet importable (e.g. during isolated unit tests).
+try:
+    from .const import MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MAX_DELAY  # MED-4
+except ImportError:  # pragma: no cover
+    MAX_RETRIES = 3
+    RETRY_BASE_DELAY = 1.0
+    RETRY_MAX_DELAY = 30.0
+
+
+@dataclass
+class VeniceAIMetrics:
+    """Lightweight in-memory usage/telemetry counters for a client instance.
+
+    These counters back the diagnostic sensor entities (LOW-4) so users can
+    monitor API usage, token consumption, and error rates without enabling
+    debug logging. All counters are cumulative for the lifetime of the client
+    (i.e. until the config entry is reloaded).
+    """
+
+    request_count: int = 0
+    error_count: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    last_error: str | None = None
+
+    def record_request(self) -> None:
+        """Increment the total request counter."""
+        self.request_count += 1
+
+    def record_error(self, error: BaseException) -> None:
+        """Increment the error counter and remember the last error message."""
+        self.error_count += 1
+        self.last_error = f"{type(error).__name__}: {error}"
+
+    def record_usage(self, usage: dict[str, Any] | None) -> None:
+        """Accumulate token usage from an API ``usage`` block, if present."""
+        if not isinstance(usage, dict):
+            return
+        self.prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
+        self.completion_tokens += int(usage.get("completion_tokens", 0) or 0)
+        self.total_tokens += int(usage.get("total_tokens", 0) or 0)
+
 
 
 class VeniceAIError(Exception):
@@ -189,6 +235,7 @@ class ChatCompletions:
             payload = {**payload, **kwargs}
         payload = {**payload, "stream": False}
 
+        self.client.metrics.record_request()
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
@@ -198,7 +245,11 @@ class ChatCompletions:
                 timeout=120.0,
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            # Accumulate token usage for the diagnostic sensors (LOW-4).
+            if isinstance(result, dict):
+                self.client.metrics.record_usage(result.get("usage"))
+            return result
 
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
@@ -214,15 +265,22 @@ class ChatCompletions:
                         error_message = error_json["error"]
                 except json.JSONDecodeError:
                     pass
-            raise _categorize_http_error(err.response.status_code, error_message, "chat completion") from err
+            categorized = _categorize_http_error(err.response.status_code, error_message, "chat completion")
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
 
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI request error: %s", err)
-            raise NetworkError(f"Request error (chat completion): {err}") from err
+            network_err = NetworkError(f"Request error (chat completion): {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode non-streaming JSON response: %s", response.text)
-            raise VeniceAIError(f"Failed to decode API response: {response.text}") from err
+            decode_err = VeniceAIError(f"Failed to decode API response: {response.text}")
+            self.client.metrics.record_error(decode_err)
+            raise decode_err from err
+
 
 
 class Models:
@@ -271,37 +329,6 @@ class Models:
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode models JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode models API response") from err
-
-
-class Voices:
-    """Voices API for Venice AI."""
-
-    def __init__(self, client: "AsyncVeniceAIClient") -> None:
-        """Initialize voices API."""
-        self.client = client
-
-    async def list(self) -> list[dict]:
-        """List available voices."""
-        try:
-            response = await self.client._async_request_with_retry(
-                "GET",
-                "/audio/voices",
-                headers=self.client._headers,
-            )
-            response.raise_for_status()
-            voice_data = response.json()
-            voices = voice_data.get("data", [])
-            return voices
-        except httpx.HTTPStatusError as err:
-            error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error("Venice AI Voices API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "fetching voices") from err
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI Voices API request error: %s", err)
-            raise NetworkError(f"Request error fetching voices: {err}") from err
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode voices JSON response: %s", response.text)
-            raise VeniceAIError("Failed to decode voices API response") from err
 
 
 class Speech:
@@ -537,10 +564,15 @@ class AsyncVeniceAIClient:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._http_client = http_client if http_client else httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0)
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
         )
         self._should_close_client = not http_client
         self._closed = False
+
+        # In-memory usage/telemetry counters backing the diagnostic sensor
+        # entities (LOW-4). Shared across all sub-API helpers via ``self``.
+        self.metrics = VeniceAIMetrics()
 
         self._headers = {
             "Authorization": f"Bearer {api_key}",
@@ -549,7 +581,6 @@ class AsyncVeniceAIClient:
         }
         self.chat = ChatCompletions(self)
         self.models = Models(self)
-        self.voices = Voices(self)
         self.speech = Speech(self)
         self.transcriptions = Transcriptions(self)
         self.images = Images(self)
@@ -560,28 +591,30 @@ class AsyncVeniceAIClient:
         endpoint: str,
         **kwargs: Any,
     ) -> httpx.Response:
-        """Make an HTTP request with exponential backoff retry for transient failures."""
-        max_retries = 3
-        retryable_statuses = {429, 500, 502, 503}
-        base_delay = 1.0
+        """Make an HTTP request with exponential backoff retry for transient failures.
 
+        Retry configuration is sourced from the module-level constants
+        MAX_RETRIES, RETRY_BASE_DELAY, and RETRY_MAX_DELAY (defined in
+        const.py — MED-4) so they can be tuned without touching this method.
+        """
+        retryable_statuses = {429, 500, 502, 503}
         url = f"{self._base_url}{endpoint}"
 
-        for attempt in range(max_retries + 1):
+        for attempt in range(MAX_RETRIES + 1):
             try:
                 response = await self._http_client.request(method, url, **kwargs)
 
                 if response.status_code in retryable_statuses:
-                    if attempt < max_retries:
+                    if attempt < MAX_RETRIES:
                         # Fully consume response body to free connection before retry
                         try:
                             await response.aread()
                         except Exception:
                             pass
-                        delay = min(base_delay * (2 ** attempt), 30.0)
+                        delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
                         _LOGGER.warning(
                             "Venice AI API returned HTTP %d, retrying in %.1fs (attempt %d/%d)",
-                            response.status_code, delay, attempt + 1, max_retries,
+                            response.status_code, delay, attempt + 1, MAX_RETRIES,
                         )
                         await asyncio.sleep(delay)
                         continue
@@ -589,11 +622,11 @@ class AsyncVeniceAIClient:
                 return response
 
             except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as err:
-                if attempt < max_retries:
-                    delay = min(base_delay * (2 ** attempt), 30.0)
+                if attempt < MAX_RETRIES:
+                    delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
                     _LOGGER.warning(
                         "Venice AI API request error (%s), retrying in %.1fs (attempt %d/%d)",
-                        type(err).__name__, delay, attempt + 1, max_retries,
+                        type(err).__name__, delay, attempt + 1, MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
                 else:

@@ -9,6 +9,7 @@ from typing import Any
 
 from homeassistant.components.conversation import (
     HOME_ASSISTANT_AGENT,
+    MATCH_ALL,
     ConversationEntity,
     ConversationInput,
     ConversationResult,
@@ -29,6 +30,7 @@ from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
 
 from .client import AsyncVeniceAIClient, RateLimitError, VeniceAIError
+from .venice_api import ChatParameters, VeniceConversationService
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
@@ -39,6 +41,8 @@ from .const import (
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
     RECOMMENDED_DISABLE_THINKING,
+    CONF_STREAM_RESPONSE,
+    RECOMMENDED_STREAM_RESPONSE,
     DOMAIN,
     HAS_VOLUPTUOUS_OPENAPI,
     MAX_CHAT_HISTORY_SIZE,
@@ -219,8 +223,21 @@ def _convert_chat_log_to_venice_messages(
         if isinstance(msg, UserContent):
             messages.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AssistantContent):
-            content = _strip_thinking(msg.content) if strip_thinking else msg.content
-            messages.append({"role": "assistant", "content": content})
+            raw = _strip_thinking(msg.content) if strip_thinking else msg.content
+            # Try to decode JSON-encoded assistant messages that carry
+            # tool_calls metadata embedded during async_process.
+            tool_calls = None
+            try:
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict) and "text" in decoded:
+                    raw = decoded["text"]
+                    tool_calls = decoded.get("tool_calls")
+            except (json.JSONDecodeError, TypeError):
+                tool_calls = None
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": raw}
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+            messages.append(assistant_msg)
         elif isinstance(msg, ToolResultContent):
             messages.append({
                 "role": "tool",
@@ -262,6 +279,8 @@ class VeniceAIConversationEntity(ConversationEntity):
         """Initialize the entity."""
         self.entry = entry
         self._client = entry.runtime_data.client
+        # ARCH-1/ARCH-2: delegate API interaction to the service layer.
+        self._service = VeniceConversationService(self._client)
         self._attr_unique_id = f"{entry.entry_id}_conversation"
         self._attr_name = entry.title
         self._attr_device_info = dr.DeviceInfo(
@@ -312,12 +331,12 @@ class VeniceAIConversationEntity(ConversationEntity):
     @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        return ["en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "zh"]
+        return MATCH_ALL
 
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS, CONF_STRIP_THINKING_RESPONSE, CONF_DISABLE_THINKING]
+        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS, CONF_STRIP_THINKING_RESPONSE, CONF_DISABLE_THINKING, CONF_STREAM_RESPONSE]
 
     async def async_process(
         self, user_input: ConversationInput
@@ -402,16 +421,30 @@ class VeniceAIConversationEntity(ConversationEntity):
                 venice_params: dict[str, Any] | None = None
                 if disable_thinking:
                     venice_params = {"disable_thinking": True}
-                response_data = await self._client.chat.completions.create_non_streaming(
+
+                # ARCH-1/ARCH-2 + MED-3: delegate the API interaction to the
+                # service layer. When streaming is enabled the service consumes
+                # the streaming chat API and reassembles deltas (and tool-call
+                # fragments) into a response shaped like the non-streaming one,
+                # so the downstream parsing logic is identical for both paths.
+                stream_response = options.get(
+                    CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE
+                )
+                chat_params = ChatParameters(
                     model=model,
-                    messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
                     tools=venice_tools if venice_tools else None,
                     venice_parameters=venice_params,
-                    stream=False,
                 )
+                if stream_response:
+                    stream_result = await self._service.chat_stream(
+                        messages, chat_params
+                    )
+                    response_data = stream_result.as_response()
+                else:
+                    response_data = await self._service.chat(messages, chat_params)
                 if not isinstance(response_data, dict):
                     _LOGGER.error(
                         "Invalid response type from Venice AI: %s",
@@ -450,10 +483,16 @@ class VeniceAIConversationEntity(ConversationEntity):
                     assistant_response_content = text_content
                     break
 
-                # Process tool calls
+                # Store assistant message with tool call metadata encoded so
+                # _convert_chat_log_to_venice_messages can reconstruct the
+                # full assistant+tool_calls payload the API expects.
+                encoded_content = json.dumps({
+                    "text": text_content,
+                    "tool_calls": tool_calls,
+                })
                 assistant_content = AssistantContent(
                     agent_id="venice_ai",
-                    content=text_content,
+                    content=encoded_content,
                 )
                 chat_log.content.append(assistant_content)
 
@@ -568,8 +607,7 @@ class VeniceAIConversationEntity(ConversationEntity):
             response=intent_response,
         )
 
-    @callback
-    def async_added_to_hass(self) -> None:
+    async def async_added_to_hass(self) -> None:
         """Register update listener."""
         self.entry.async_on_unload(
             self.entry.add_update_listener(self._async_entry_updated)

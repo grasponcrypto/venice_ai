@@ -99,6 +99,24 @@ else:
                 self._attr_unique_id,
             )
 
+        async def async_added_to_hass(self) -> None:
+            """Signal that the AI Task entity is fully registered (HIGH-1).
+
+            HA calls this hook once the entity has been added to the state
+            machine. Setting the ``ai_task_ready`` event releases any service
+            calls that were waiting on the platform setup synchronization
+            barrier in ``__init__.py``.
+            """
+            await super().async_added_to_hass()
+            ready = getattr(self.entry.runtime_data, "ai_task_ready", None)
+            if ready is not None:
+                ready.set()
+                _LOGGER.debug(
+                    "AI Task entity for entry %s ready; setup barrier released",
+                    self.entry.entry_id,
+                )
+
+
         async def async_generate_data(
             self,
             task: ai_task.GenDataTask,
@@ -146,7 +164,7 @@ else:
             temperature = self.entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
 
             try:
-                response_data = await self._client.chat.completions.create_non_streaming(
+                response_data = await self._client.chat.create_non_streaming(
                     model=model,
                     messages=messages,
                     max_tokens=max_tokens,

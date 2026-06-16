@@ -1,0 +1,5 @@
+# Services for the Venice AI integration
+
+# Image generation is registered programmatically in __init__.py
+# The generate_image service schema is defined there via
+# hass.services.async_register(...).

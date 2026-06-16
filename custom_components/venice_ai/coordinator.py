@@ -26,7 +26,7 @@ class VeniceAICoordinatorData(TypedDict):
 
     text_models: list[dict[str, Any]]
     audio_models: list[dict[str, Any]]
-    voices: list[dict[str, Any]]
+    voices: list[str]
 
 
 class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorData]):
@@ -83,6 +83,13 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             if isinstance(tts_models, list):
                 data["audio_models"].extend(tts_models)
                 _LOGGER.debug("Coordinator fetched %d TTS models", len(tts_models))
+                # Extract voices from TTS model metadata (voice_models field per model)
+                for model in tts_models:
+                    voice_models = model.get("voice_models", [])
+                    if isinstance(voice_models, list):
+                        for vid in voice_models:
+                            if isinstance(vid, str) and vid not in data["voices"]:
+                                data["voices"].append(vid)
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching TTS models: %s", err)
             raise UpdateFailed(f"Authentication failed: {err}") from err
@@ -118,24 +125,13 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         except Exception:
             _LOGGER.exception("Unexpected error fetching ASR models")
 
-        try:
-            voices = await self.client.voices.list()
-            if isinstance(voices, list):
-                data["voices"] = voices
-                _LOGGER.debug("Coordinator fetched %d voices", len(voices))
-        except AuthenticationError as err:
-            _LOGGER.error("Authentication error fetching voices: %s", err)
-            raise UpdateFailed(f"Authentication failed: {err}") from err
-        except RateLimitError as err:
-            _LOGGER.warning("Rate limit exceeded fetching voices: %s", err)
-            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
-        except ServiceUnavailableError as err:
-            _LOGGER.warning("Venice AI service unavailable fetching voices: %s", err)
-        except NetworkError as err:
-            _LOGGER.warning("Network error fetching voices: %s", err)
-        except VeniceAIError as err:
-            _LOGGER.warning("Venice AI error fetching voices: %s", err)
-        except Exception:
-            _LOGGER.exception("Unexpected error fetching voices")
+        # MED-1: If every fetch failed and we have no data at all, surface the
+        # failure to the coordinator so HA can apply back-off, show the entity
+        # as unavailable, and fire repair issues.  Partial failures (e.g. only
+        # ASR models missing) are tolerated so other platforms keep working.
+        if not data["text_models"] and not data["audio_models"] and not data["voices"]:
+            raise UpdateFailed(
+                "All Venice AI data fetches failed; coordinator has no data to return."
+            )
 
         return data

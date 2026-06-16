@@ -39,6 +39,8 @@ from .const import (
     CONF_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
     RECOMMENDED_DISABLE_THINKING,
+    CONF_STREAM_RESPONSE,
+    RECOMMENDED_STREAM_RESPONSE,
     CONF_TTS_MODEL,
     CONF_TTS_VOICE,
     CONF_TTS_RESPONSE_FORMAT,
@@ -59,7 +61,8 @@ from .const import (
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
-    VENICE_TTS_VOICES,
+    CONF_REQUEST_TIMEOUT,
+    RECOMMENDED_REQUEST_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -200,9 +203,19 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
 class VeniceAIOptionsFlow(OptionsFlow):
     """Options flow for Venice AI."""
 
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        super().__init__()
+        self._config_entry = config_entry
+
+    @property
+    def config_entry(self) -> ConfigEntry:
+        """Return the config entry."""
+        return self._config_entry
+
     async def _fetch_model_options(
         self,
-    ) -> tuple[list[SelectOptionDict], list[SelectOptionDict], list[SelectOptionDict], dict[str, str]]:
+    ) -> tuple[list[SelectOptionDict], list[SelectOptionDict], list[SelectOptionDict], list[SelectOptionDict], dict[str, str]]:
         """Fetch available models from Venice AI and return options + errors.
 
         The client is scoped entirely within this method via ``async with`` so
@@ -214,18 +227,58 @@ class VeniceAIOptionsFlow(OptionsFlow):
         is garbage-collected before cleanup runs.
 
         Returns:
-            (chat_models, tts_models, stt_models, errors)
+            (chat_models, tts_models, stt_models, tts_voices, errors)
         """
         chat_options: list[SelectOptionDict] = []
         tts_options: list[SelectOptionDict] = []
         stt_options: list[SelectOptionDict] = []
+        voice_options: list[SelectOptionDict] = []
         errors: dict[str, str] = {}
+
+        # PERF-2: reuse coordinator data when available instead of making an
+        # extra API round-trip every time the options flow is opened.
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        coordinator = getattr(runtime_data, "coordinator", None)
+        if coordinator and coordinator.data:
+            coord_data = coordinator.data
+            text_models = coord_data.get("text_models", [])
+            audio_models = coord_data.get("audio_models", [])
+            voices = coord_data.get("voices", [])
+            if text_models:
+                chat_options = [
+                    SelectOptionDict(label=m.get("id", ""), value=m.get("id", ""))
+                    for m in text_models
+                    if m.get("id")
+                ]
+            tts_model_ids = {m.get("id") for m in audio_models if m.get("model_type") == "tts" and m.get("id")}
+            if tts_model_ids:
+                tts_options = [SelectOptionDict(label=mid, value=mid) for mid in sorted(tts_model_ids)]
+            stt_model_ids = {m.get("id") for m in audio_models if m.get("model_type") in ("asr", "stt") and m.get("id")}
+            if stt_model_ids:
+                stt_options = [SelectOptionDict(label=mid, value=mid) for mid in sorted(stt_model_ids)]
+            if voices:
+                voice_options = [SelectOptionDict(label=v, value=v) for v in voices]
+            if chat_options or tts_options or stt_options:
+                _LOGGER.debug(
+                    "PERF-2: options flow reusing coordinator data (%d text, %d tts, %d stt models)",
+                    len(chat_options), len(tts_options), len(stt_options),
+                )
+                # Fall through to fallback defaults below if any list is still empty
+                if not chat_options:
+                    chat_options = [SelectOptionDict(label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL)]
+                if not tts_options:
+                    tts_options = [SelectOptionDict(label=RECOMMENDED_TTS_MODEL, value=RECOMMENDED_TTS_MODEL)]
+                if not stt_options:
+                    stt_options = [SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)]
+                if not voice_options:
+                    voice_options = [SelectOptionDict(label=RECOMMENDED_TTS_VOICE, value=RECOMMENDED_TTS_VOICE)]
+                return chat_options, tts_options, stt_options, voice_options, errors
 
         api_key = self.config_entry.data.get(CONF_API_KEY)
         if not api_key:
             _LOGGER.warning("No API key found in config entry for options flow")
             errors["base"] = "missing_api_key"
-            return chat_options, tts_options, stt_options, errors
+            return chat_options, tts_options, stt_options, voice_options, errors
 
         try:
             async with AsyncVeniceAIClient(
@@ -260,6 +313,16 @@ class VeniceAIOptionsFlow(OptionsFlow):
                         if m.get("id")
                     ]
                     _LOGGER.debug("Found %d TTS models", len(tts_options))
+                    # Extract voice IDs from TTS model metadata (voice_models field)
+                    seen_voice_ids: set[str] = set()
+                    for model in tts_resp:
+                        voice_models = model.get("voice_models", [])
+                        if isinstance(voice_models, list):
+                            for vid in voice_models:
+                                if isinstance(vid, str) and vid not in seen_voice_ids:
+                                    seen_voice_ids.add(vid)
+                                    voice_options.append(SelectOptionDict(label=vid, value=vid))
+                    _LOGGER.debug("Found %d TTS voices across all TTS models", len(voice_options))
                 else:
                     _LOGGER.debug("No TTS models returned or invalid response")
 
@@ -299,13 +362,20 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)
             ]
 
-        return chat_options, tts_options, stt_options, errors
+        # Fallback voice options when none were extracted from models
+        if not voice_options:
+            voice_options = [
+                SelectOptionDict(label=RECOMMENDED_TTS_VOICE, value=RECOMMENDED_TTS_VOICE)
+            ]
+
+        return chat_options, tts_options, stt_options, voice_options, errors
 
     def _build_options_schema(
         self,
         models_options: list[SelectOptionDict],
         tts_models_options: list[SelectOptionDict],
         stt_models_options: list[SelectOptionDict],
+        voice_options: list[SelectOptionDict] | None = None,
         llm_api_options: list[SelectOptionDict] | None = None,
     ) -> vol.Schema:
         """Build the voluptuous options schema from fetched model lists."""
@@ -364,6 +434,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     description={"suggested_value": options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)},
                 ): BooleanSelector(),
                 vol.Optional(
+                    CONF_STREAM_RESPONSE,
+                    description={"suggested_value": options.get(CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE)},
+                ): BooleanSelector(),
+                vol.Optional(
                     CONF_MAX_TOOL_ITERATIONS,
                     description={"suggested_value": options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)},
                 ): NumberSelector(
@@ -384,9 +458,8 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     description={"suggested_value": options.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)},
                 ): SelectSelector(
                     SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(label=voice, value=voice)
-                            for voice in VENICE_TTS_VOICES
+                        options=voice_options or [
+                            SelectOptionDict(label=RECOMMENDED_TTS_VOICE, value=RECOMMENDED_TTS_VOICE)
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
                     )
@@ -439,6 +512,14 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     CONF_STT_TIMESTAMPS,
                     description={"suggested_value": options.get(CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS)},
                 ): BooleanSelector(),
+                # HIGH-4: expose request timeout so users with slow connections
+                # or large payloads can increase it without editing source code.
+                vol.Optional(
+                    CONF_REQUEST_TIMEOUT,
+                    description={"suggested_value": options.get(CONF_REQUEST_TIMEOUT, RECOMMENDED_REQUEST_TIMEOUT)},
+                ): NumberSelector(
+                    NumberSelectorConfig(min=10.0, max=300.0, step=5.0, mode="slider")
+                ),
             }
         )
 
@@ -495,9 +576,9 @@ class VeniceAIOptionsFlow(OptionsFlow):
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
 
-        models, tts_models, stt_models, fetch_errors = await self._fetch_model_options()
+        models, tts_models, stt_models, voice_options, fetch_errors = await self._fetch_model_options()
         llm_api_options = await self._fetch_llm_api_options()
-        options_schema = self._build_options_schema(models, tts_models, stt_models, llm_api_options)
+        options_schema = self._build_options_schema(models, tts_models, stt_models, voice_options, llm_api_options)
 
         # Merge fetch errors with validation errors
         if fetch_errors:

@@ -30,7 +30,6 @@ from .const import (
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
-    VENICE_TTS_VOICES,
 )
 
 
@@ -149,8 +148,18 @@ class VeniceAITTS(TextToSpeechEntity):
         return (response_format, audio_data)
 
     def async_get_supported_voices(self, language: str) -> list[Voice] | None:
-        """Return available Venice voices for Home Assistant voice selection."""
-        return [Voice(voice_id, voice_id) for voice_id in VENICE_TTS_VOICES]
+        """Return available Venice voices for Home Assistant voice selection.
+
+        Voices are pulled from the coordinator's cached audio-models data.
+        When the coordinator hasn't finished its first update yet, an empty
+        list is returned so the TTS entity degrades gracefully.
+        """
+        coordinator = getattr(self._config_entry.runtime_data, "coordinator", None)
+        if coordinator is None or coordinator.data is None:
+            return []
+
+        voices_data: list[str] = coordinator.data.get("voices", [])
+        return [Voice(voice_id, voice_id) for voice_id in voices_data]
 
     async def async_stream_tts_audio(
         self, request: TTSAudioRequest

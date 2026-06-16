@@ -8,8 +8,9 @@ import uuid
 
 import voluptuous as vol
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
@@ -62,7 +63,8 @@ _LOGGER = logging.getLogger(__name__)
 
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_AI_TASK = "ai_task"
-PLATFORMS = [Platform.CONVERSATION, Platform.TTS, Platform.STT]
+PLATFORMS = [Platform.CONVERSATION, Platform.TTS, Platform.STT, Platform.SENSOR]
+
 if _HAS_AI_TASK:
     ai_task_platform = getattr(Platform, "AI_TASK", None)
     if ai_task_platform:
@@ -78,6 +80,11 @@ _ISSUE_API_DOWN = "api_unavailable_{entry_id}"
 _ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
 
 # Map deprecated model IDs → recommended replacements (update as needed).
+# Currently empty: no Venice AI models have been deprecated in the v1 API
+# roster.  Populate this dict when Venice AI announces retirements, e.g.:
+#   _DEPRECATED_MODELS = {"llama-2-70b": "llama-3.3-70b"}
+# LOW-1: kept intentionally to preserve the model-check repair-issue loop;
+# removing the dict would break the _async_create_model_issues code path.
 _DEPRECATED_MODELS: dict[str, str] = {}
 
 
@@ -88,6 +95,12 @@ class VeniceAIRuntimeData:
     client: AsyncVeniceAIClient
     coordinator: VeniceAIDataUpdateCoordinator
     ai_task_entity: object | None = None
+    # HIGH-1: synchronization barrier signalled by the AI Task platform once its
+    # entity has finished being added to HA. Consumers (e.g. the ai_task service)
+    # await this before touching ``ai_task_entity`` to avoid a race where the
+    # service fires before the entity exists.
+    ai_task_ready: asyncio.Event = field(default_factory=asyncio.Event)
+
 
 
 class VeniceAIConfigEntry(ConfigEntry):
@@ -170,6 +183,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     translation_placeholders={"config_entry": entry_id},
                 )
 
+            # HIGH-1: wait for the AI Task platform to finish adding its entity
+            # before using it. async_forward_entry_setups returns once platforms
+            # START loading, not once entities are registered, so a service call
+            # fired immediately after setup could otherwise race ahead of the
+            # entity. We bound the wait so a genuinely missing entity still fails
+            # fast rather than hanging the service call indefinitely.
+            ready: asyncio.Event = entry.runtime_data.ai_task_ready
+            if not ready.is_set():
+                try:
+                    await asyncio.wait_for(ready.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    _LOGGER.warning(
+                        "AI Task entity for entry %s was not ready within timeout",
+                        entry.entry_id,
+                    )
+
             # Get the AI Task entity from runtime_data (Architecture 7.1 fix)
             ai_task_entity = entry.runtime_data.ai_task_entity
 
@@ -179,6 +208,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     translation_key="entity_not_found",
                     translation_placeholders={"entry_id": entry.entry_id},
                 )
+
 
             task_text = call.data["task"]
             structure = call.data.get("structure")
@@ -286,6 +316,10 @@ def _async_on_coordinator_update(
         _LOGGER.warning(
             "Coordinator auth failure for entry %s — repair issue created", entry_id
         )
+        # CRIT-1: programmatically start the reauth flow so HA opens the
+        # re-authentication dialog without requiring the user to manually
+        # locate and act on the repair issue.
+        entry.async_start_reauth(hass)
     elif RateLimitError is not None and isinstance(cause, RateLimitError):
         ir.async_create_issue(
             hass,
@@ -479,13 +513,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     return True
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_reload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None:
     """Reload Venice AI when options change."""
     _LOGGER.info("Reloading Venice AI entry %s due to options update", entry.entry_id)
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
     """Unload Venice AI.
 
     Explicitly awaits client.close() after platforms are unloaded.

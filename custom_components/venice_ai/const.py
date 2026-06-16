@@ -29,6 +29,12 @@ CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
 CONF_DISABLE_THINKING = "disable_thinking"
 RECOMMENDED_DISABLE_THINKING = False
 
+# MED-3: Opt-in streaming for conversation responses. When enabled, the
+# conversation entity consumes the Venice AI streaming chat API via the
+# VeniceConversationService and accumulates deltas (including tool calls).
+CONF_STREAM_RESPONSE = "stream_response"
+RECOMMENDED_STREAM_RESPONSE = False
+
 # Venice AI TTS options
 CONF_TTS_MODEL = "tts_model"
 RECOMMENDED_TTS_MODEL = "tts-kokoro"
@@ -38,20 +44,6 @@ CONF_TTS_RESPONSE_FORMAT = "tts_response_format"
 RECOMMENDED_TTS_RESPONSE_FORMAT = "mp3"
 CONF_TTS_SPEED = "tts_speed"
 RECOMMENDED_TTS_SPEED = 1.0
-
-# Venice AI TTS voices (shared between config flow and TTS provider voice list)
-VENICE_TTS_VOICES = [
-    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jadzia", "af_jessica",
-    "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
-    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
-    "am_onyx", "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_lily",
-    "bm_daniel", "bm_fable", "bm_george", "bm_lewis", "zf_xiaobei",
-    "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi", "zm_yunjian", "zm_yunxi",
-    "zm_yunxia", "zm_yunyang", "ff_siwis", "hf_alpha", "hf_beta", "hm_omega",
-    "hm_psi", "if_sara", "im_nicola", "jf_alpha", "jf_gongitsune",
-    "jf_nezumi", "jf_tebukuro", "jm_kumo", "pf_dora", "pm_alex", "pm_santa",
-    "ef_dora", "em_alex", "em_santa",
-]
 
 # Venice AI STT options
 CONF_STT_MODEL = "stt_model"
@@ -69,5 +61,31 @@ MAX_CHAT_LOG_LENGTH = 50
 # Maximum number of concurrent conversations held in-memory (LRU eviction)
 MAX_CHAT_HISTORY_SIZE = 20
 
-# Maximum audio buffer size for STT to prevent memory spikes (10 MB)
+# Maximum audio buffer size for STT to prevent memory spikes (10 MB).
+# Venice AI does not support chunked/streaming STT uploads; the entire audio
+# payload must be buffered before submission. Recordings exceeding this limit
+# are rejected early with an ERROR result rather than causing an OOM spike.
 MAX_STT_BUFFER_SIZE = 10 * 1024 * 1024
+
+# Request timeout configuration (HIGH-4)
+# Users with slow connections or large payloads can raise this via options.
+CONF_REQUEST_TIMEOUT = "request_timeout"
+RECOMMENDED_REQUEST_TIMEOUT = 60.0
+
+# Retry configuration constants (MED-4).
+# Extracted from client.py so they can be tuned without touching client logic.
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0
+RETRY_MAX_DELAY = 30.0
+
+# Inactive conversation TTL in seconds (HIGH-2 periodic cleanup).
+CONVERSATION_TTL_SECONDS = 3600  # 1 hour
+
+# Feature minimum HA versions (MAINT-3).
+# Reference table for conditional feature activation and user-facing docs.
+FEATURE_MIN_VERSIONS: dict[str, str] = {
+    "ai_task": "2024.8.0",
+    "streaming_tts": "2024.4.0",
+    "conversation_entity": "2023.10.0",
+    "sensor_total_increasing": "2021.12.0",
+}
