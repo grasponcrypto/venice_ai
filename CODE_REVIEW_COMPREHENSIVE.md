@@ -1141,4 +1141,113 @@ or E. The next pass should:
   (only at type-check time). This pattern is documented in the test module's
   docstring so future contributors know which approach to pick for new tests.
 
+---
+
+## Appendix F — Full Audit Pass (Sonnet, follow-up)
+
+This pass was triggered by the user request: *"full review of the
+comprehensive review — was everything implemented?"* A full re-audit
+of the codebase was performed against the action plan in §5 and the
+story list. The following observations update the Notable Items list
+in Appendix E and add the missing user-facing documents that the
+review always intended but were never created.
+
+### F.1 Newly-observed implementations (post-Appendix E)
+
+The following stories are now implemented in the codebase even
+though Appendix E listed them as open:
+
+| Story  | Where it lives now                                                                                            |
+|--------|---------------------------------------------------------------------------------------------------------------|
+| DOC-1  | `client.py` has module- and class-level docstrings on every public surface (Metrics, Errors, ChatCompletions, Models, Speech, Transcriptions, Images, AsyncVeniceAIClient). |
+| MAINT-2 | `__init__.py::async_migrate_entry` migrates entries to `(version=1, minor_version=1)`.                          |
+| MAINT-3 | `const.py::FEATURE_MIN_VERSIONS` maps `ai_task` / `streaming_tts` / `conversation_entity` / `sensor_total_increasing` to their HA minimum versions. |
+| MED-4  | `const.py::MAX_RETRIES`, `RETRY_BASE_DELAY`, `RETRY_MAX_DELAY`; consumed by `_request_with_retry`.             |
+| PERF-4 | `client.py` instantiates `httpx.Limits(max_keepalive_connections=..., max_connections=...)` from the const defaults. |
+| SEC-1  | `diagnostics.py::_redact_api_key` redacts the API key to last-4; `client.py::_sanitize_header_value` strips CR/LF before any header is set. |
+| SEC-2  | `conversation.py` validates tool-call args are a JSON object (`# SEC-2:` inline marker) before invoking the tool. |
+
+### F.2 Stories that remain genuinely open
+
+After re-audit these are still **not** implemented. The previous
+Notable Items list (Appendix E) was already correct on these:
+
+| Story  | What's missing                                                                                                |
+|--------|---------------------------------------------------------------------------------------------------------------|
+| ARCH-4 | `validate_config` helper does not exist; only temperature is bounded in `_validate_numeric_options`. Other ranges depend on `NumberSelectorConfig` which prevents obvious out-of-range values but does not enforce a cross-field coherence rule (e.g. `max_tokens × conversation_length ≤ daily_budget`). |
+| HIGH-3 | STT still buffers the full payload in-memory (see `stt.py::audio_data.extend(chunk)` + `MAX_STT_BUFFER_SIZE` check). No client-side overlap or chunked upload exists because Venice ASR does not currently expose a streaming endpoint. The `MAX_STT_BUFFER_SIZE` early-reject is the only mitigation. |
+| PERF-1 | No module-level `lru_cache` on schema/format helpers in `conversation.py`. They are pure functions and could benefit from caching on the (tool-name, hashable-schema) key. |
+| PERF-3 | `AssistantToolMessage` is built inline in `conversation.py`; no `dataclass(frozen=True)` extraction. Reasonable to skip — there's only one callsite. |
+| QUAL-1 | Error messages use the structured exception classes (AuthenticationError / RateLimitError / ServiceUnavailableError / NetworkError) but the *user-facing* presentation in the conversation entity still surfaces the raw exception text. A friendly formatter (`_format_error`) is not present. |
+| QUAL-2 | Diagnostics dumps full last-error text and the redacted API key but no schema-version or model-list snapshot. Low-priority. |
+| QUAL-3 | Property-based tests (`hypothesis`) are absent; not strictly required. |
+| QUAL-4 | `conftest.py` does not provide an integration-level fixture (HA + config_entry + entry_options). The current unit tests avoid HA altogether which is fine but limits regression coverage. |
+| DOC-3  | `CHANGELOG.md` — **created in this pass** (see §F.3).                                                       |
+| DOC-4  | `CONTRIBUTING.md` — **created in this pass** (see §F.3).                                                     |
+| MAINT-1 | `requirements.txt` / `requirements_test.txt` are not present. Pytest alone is needed; document the install command in `CONTRIBUTING.md` instead (done). |
+
+### F.3 Files added in this pass
+
+Two user-facing documents the review always intended but which were
+missing on disk:
+
+1. **`CHANGELOG.md`** — Keep-a-Changelog format. `[Unreleased]`
+   enumerates every story implemented in this branch
+   (DOC-1/2, MAINT-2/3, MED-3/4, PERF-4, SEC-1/2, TEST-3) with the
+   file references that prove they landed. `[0.9.0]` records the
+   initial public release (conversation, AI Task, TTS, STT, sensor,
+   reauth, diagnostics, 25 baseline tests).
+
+2. **`CONTRIBUTING.md`** — Full contributor guide: prerequisites
+   (Python 3.12, `pip install -U pip pytest pytest-asyncio`),
+   `pytest tests/` invocation, project layout, style guidelines
+   (type hints, docstrings, constants-in-`const.py`, voluptuous
+   schemas in `config_flow.py`, logging discipline), PR workflow
+   against `0.9-revise`, bug-report checklist (HA version,
+   integration version, debug log, reproduction), and the release
+   process (CHANGELOG bump → tag → push).
+
+### F.4 Reconciliation of §5 action plan
+
+§5 currently marks many items as ✅ that Appendix E and this audit
+flag as still-open. Concrete steps to bring §5 back in line:
+
+1. Re-read each story and replace the literal ✅ with one of:
+   - **Done** — present in code (only for the items in §F.1).
+   - **Partial** — implemented partially; link the file/line that
+     proves partial coverage (e.g. ARCH-4 → temperature only).
+   - **Open** — not implemented; carry the story ID into the
+     `CHANGELOG.md` `[Unreleased]` block and into a GitHub issue
+     so it doesn't get lost.
+2. Add a one-line "verified by" pointer for each ✅ so future
+   reviewers can confirm (e.g. `✅ Done — verified in
+   client.py::_sanitize_header_value`).
+3. Replace the per-item "Recommended Model" column with a "Model
+   recommended / Model used" column so Sonnet-vs-Opus guidance is
+   auditable.
+
+### F.5 Test verification
+
+```
+$ python -m pytest tests/
+============================= 41 passed in 0.30s ==============================
+```
+
+Three test files: `test_client.py` (14 tests), `test_schema.py`
+(16 tests, added in TEST-3), `test_venice_api.py` (11 tests).
+Coverage is concentrated on the pure-Python surfaces of the
+client; HA-dependent entity classes remain un-instrumented by
+design (covered by manual HA QA).
+
+### F.6 Git bookkeeping
+
+- Branch: `0.9-revise`.
+- Latest commit on this branch at audit time: `6e315c0` ("docs(test,
+  readme): Sonnet second pass - TEST-3 schema tests + DOC-2 README
+  sections"). This Appendix-F commit and the `CHANGELOG.md` /
+  `CONTRIBUTING.md` files will appear as the next commit on the same
+  branch.
+- Files changed by this audit: `CHANGELOG.md` (new),
+  `CONTRIBUTING.md` (new), `CODE_REVIEW_COMPREHENSIVE.md`
+  (Appendix F appended).
 

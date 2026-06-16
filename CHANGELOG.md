@@ -1,49 +1,53 @@
 ﻿# Changelog
 
-All notable changes to **Venice AI for Home Assistant** are documented here.
-
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-
----
+All notable changes to **Venice AI Conversation** are documented here.
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
 ### Added
-- **CRIT-1** — `async_start_reauth()` is now called automatically when the coordinator detects an `AuthenticationError`, opening the re-authentication dialog without requiring manual user action on the repair issue.
-- **HIGH-2** — Periodic conversation cleanup task in `VeniceAIConversationEntity`. Conversations that fill the LRU cache are now evicted on a schedule (configurable via `CONVERSATION_TTL_SECONDS`) rather than only on access. Prevents memory growth on long-lived HA instances.
-- **HIGH-4** — `CONF_REQUEST_TIMEOUT` option exposed in the options flow UI, allowing users to raise the per-request timeout for slow connections or large payloads (default: 60 s).
-- **MED-1** — `coordinator.py` now raises `UpdateFailed` when all three data fetches (text models, TTS models, ASR models) fail, surfacing the failure to Home Assistant's coordinator machinery rather than silently returning empty data.
-- **MED-2** — Template caching in `VeniceAIConversationEntity`. Compiled `Template` objects are cached by their source string and reused across turns, avoiding re-parsing on every conversation request.
-- **MED-3** — Opt-in streaming mode for conversation responses (`CONF_STREAM_RESPONSE`). When enabled, the integration consumes the Venice AI streaming chat API and reassembles deltas before returning the final response.
-- **LOW-1** — `_DEPRECATED_MODELS` dict in `__init__.py` documented with an explicit comment. The dict is intentionally kept empty until Venice AI retires models; the repair-issue code path is preserved.
-- **LOW-2** — `async_reload_entry` and `async_unload_entry` in `__init__.py` typed with `VeniceAIConfigEntry` (typed subclass of `ConfigEntry`) for stronger static-analysis coverage.
-- **LOW-3** — `extra_state_attributes` property added to `VeniceAIConversationEntity`, exposing `active_conversations` count as a HA state attribute for dashboard visibility.
-- **PERF-2** — Options flow (`config_flow.py`) now reuses live coordinator data when available, avoiding a redundant API round-trip every time the options flow is opened.
-- **DOC-3** — `CONTRIBUTING.md` added with development setup, coding standards, test instructions, and contribution guidelines.
-- **DOC-4** — `CHANGELOG.md` introduced (this file).
+- **DOC-1:** Module-level docstrings on all public client classes
+  (`AsyncVeniceAIClient`, `ChatCompletions`, `Models`, `Speech`,
+  `Transcriptions`, `Images`, `VeniceAIMetrics`).
+- **DOC-2:** README **Operations** and **Troubleshooting** sections.
+- **MAINT-3:** `FEATURE_MIN_VERSIONS` table in `const.py` referencing
+  HA minimum versions for `ai_task`, `streaming_tts`,
+  `conversation_entity`, and `sensor_total_increasing`.
+- **MED-4:** Retry constants `MAX_RETRIES`, `RETRY_BASE_DELAY`,
+  `RETRY_MAX_DELAY` extracted to `const.py`.
+- **PERF-4:** `httpx.Limits` configured with `DEFAULT_HTTP_KEEPALIVE`
+  and `DEFAULT_HTTP_MAX_CONNECTIONS` from `const.py`.
+- **SEC-1:** API-key redaction helper (`_redact_api_key`) used by
+  `diagnostics.py`, plus header-value sanitiser
+  (`_sanitize_header_value`) in `client.py` to scrub CR/LF.
+- **SEC-2:** Tool-call argument validation in `conversation.py`
+  ensures tool args are JSON objects before invocation.
+- **TEST-3:** `tests/test_schema.py` adds 16 schema-conversion tests
+  covering `_format_venice_schema` and `_convert_schema_to_hashable`.
+- **MAINT-2:** `async_migrate_entry` migrates older entries to the
+  current `(version=1, minor_version=1)` schema.
 
 ### Changed
-- `_fetch_model_options` in `VeniceAIOptionsFlow` now short-circuits with coordinator data before falling back to a fresh API call (PERF-2).
-- `async_added_to_hass` in `VeniceAIConversationEntity` now schedules a periodic background cleanup task (HIGH-2).
+- **PERF-4:** Centralised HTTP timeout/keepalive defaults in
+  `const.py` so they can be tuned without touching `client.py`.
 
 ### Fixed
-- **CRIT-1** — Authentication failures detected by the coordinator now automatically trigger re-authentication without user having to find the repair issue manually.
-- **MED-1** — Silent empty-data returns from the coordinator on total fetch failure are replaced with a proper `UpdateFailed` exception.
+- **MED-3:** Conversation streaming flag (`CONF_STREAM_RESPONSE`)
+  honoured by the conversation entity; opt-in default off.
 
----
-
-## [1.0.0] — Initial Release
+## [0.9.0] — Initial public release
 
 ### Added
-- Full `ConversationEntity` implementation with multi-turn chat history (LRU, max 20 conversations).
-- Text-to-Speech platform (`tts.py`) using Venice AI TTS API.
-- Speech-to-Text platform (`stt.py`) using Venice AI ASR API.
-- `DataUpdateCoordinator` for periodic model/voice metadata refresh (hourly).
-- Diagnostic `sensor.py` platform exposing model counts.
-- `ai_task.py` platform for HA 2024.8+ AI Task support.
-- Config flow with API key validation and re-authentication support.
-- Options flow with live model/voice dropdowns, all tunable parameters.
-- Tool/function-calling support via HA LLM API integration.
-- Streaming mode (opt-in via options).
-- Repair issue creation for authentication failures, rate limiting, deprecated/unavailable models.
-- `CONTRIBUTING.md` and `CHANGELOG.md` documentation.
+- Conversation agent backed by Venice AI Chat Completions.
+- AI Task entity (`ai_task.py`) using
+  `genai.process_image`/`process_text`.
+- TTS entity (`tts.py`) using Venice Speech API.
+- STT entity (`stt.py`) using Venice Transcriptions API.
+- Coordinator-driven sensor reporting token usage and last-error.
+- Reauthentication and reconfiguration flows.
+- Diagnostics export with redacted API key.
+- 25 unit tests covering `client.py` and `venice_api.py`.
+
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0
