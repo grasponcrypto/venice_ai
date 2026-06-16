@@ -657,6 +657,25 @@ key/endpoint becomes available.
 **Recommended Model:** 🟡 **Sonnet** — Snapshot test setup is straightforward once fixture data is defined  
 **Recommendation:** Ensure tool schema conversion produces expected output.
 
+**✅ COMPLETED (Sonnet):** Added `tests/test_schema.py` with 16 tests that exercise
+both schema-conversion helpers from `conversation.py`:
+
+* `_format_venice_schema` — verified the per-key type mapping (`str → "string"`,
+  `int → "integer"`, `float → "number"`, `bool → "boolean"`, unknown types
+  defaulting to `"string"`), the multiple-keys case, and the empty-schema case.
+  Parametrised regression test ensures all four mappings are locked in.
+* `_convert_schema_to_hashable` — verified dict→frozenset, list→tuple,
+  plain-type passthrough, the nested dict+list case, and the empty-dict case.
+
+The helpers cannot be imported directly because `conversation.py` transitively
+imports Home Assistant (which is unavailable in the lightweight pytest harness).
+Instead, `test_schema.py` AST-extracts the two function definitions from
+`conversation.py` and exec's them in a clean namespace with a `_StubSelectorModule`
+substitute for `homeassistant.helpers.selector`, an injected `Any`, and a stub
+`_LOGGER`. This keeps the tests faithful to the actual implementation while
+running under plain `pytest`. All 41 tests in the suite pass
+(`python -m pytest tests/`).
+
 ---
 
 ### 📝 DOCUMENTATION IMPROVEMENTS
@@ -684,11 +703,31 @@ def _convert_schema_to_hashable(obj: Any) -> Any:
 
 #### DOC-2: README Incomplete
 **Recommended Model:** 🟡 **Sonnet** — Requires synthesizing feature knowledge into clear user-facing docs  
-**Issue:** README lacks:
+**Issue:** README lacked:
 - Troubleshooting section
 - API quota/limits info
 - Model capabilities comparison
 - Example automations
+
+**✅ COMPLETED (Sonnet):** Extended `README.md` with two new sections inserted
+between "Models" and "Support":
+
+* **Operations** — enumerates every user-facing surface exposed by the integration
+  (conversation agent, AI Task entity, TTS entity, sensor entity, coordinator
+  refresh action), plus subsections on **Reconfiguration** (Configure button
+  applies changes immediately without a restart) and **Removing the integration**
+  (delete from the Devices & Services card).
+* **Troubleshooting** — a symptom → cause → resolution table covering the
+  most common failure modes (401, 429, 5xx, network errors, no models returned,
+  agent non-response, slow reasoning models, TTS silence). A **Diagnostics**
+  subsection documents how to enable `custom_components.venice_ai: debug`
+  logging via `configuration.yaml`, and a **Getting help** subsection lists the
+  information to include when opening a bug report.
+
+This addresses the originally missing **troubleshooting** guidance. The other
+README items from the original review (API quota/limits info, model-capability
+comparison matrix, example automations) remain partially open and have been
+called out in the Notable Items section below.
 
 #### DOC-3: No CONTRIBUTING.md
 **Recommended Model:** 🟢 **Fable** — Standard template with project-specific customization  
@@ -991,5 +1030,115 @@ the completed items and the artifacts produced or modified.
    original plan. Those marks reflect the *planned roadmap*, not actual
    implementation. A reconciliation pass should audit Section 5 against Appendices
    C and D and clear unverified checkmarks.
+
+---
+
+## APPENDIX E: Sonnet Work Summary – Second Pass (June 16, 2026)
+
+This second Sonnet pass closes out the remaining 🟡 Sonnet-rated tasks that were
+called out as "open" in Appendix D, plus one additional verification item
+(`test_optionsflow.py` / config-flow syntactic validation that was exercised
+during the first Sonnet pass). Each affected story now carries an inline
+**✅ COMPLETED (Sonnet)** note alongside the prior-pass completion block, and the
+prior-pass `Notable Items to Catalog` list has been refreshed to reflect only
+genuinely remaining work.
+
+### Completed Tasks in This Pass
+
+| ID | Title | File(s) Changed | Outcome |
+|----|-------|-----------------|---------|
+| TEST-3 | Snapshot/Schema Conversion Tests | `tests/test_schema.py`, `tests/conftest.py` | 16 new tests for `_format_venice_schema` and `_convert_schema_to_hashable`. Helpers are AST-extracted from `conversation.py` and exec'd in a clean namespace so they can be tested without Home Assistant. Full suite: **41 passed**. |
+| DOC-2 | README Incomplete | `README.md` | New **Operations** section (surfaces, reconfiguration, removal) and **Troubleshooting** section (symptom/cause/resolution table, diagnostics, bug-report checklist) added between Models and Support. |
+
+### New Files Created / Modified in This Pass
+
+| File | Change |
+|------|--------|
+| `tests/test_schema.py` *(new)* | 16 schema-helper tests; AST-based extraction strategy documented in module docstring |
+| `tests/conftest.py` *(modified)* | Stub Home Assistant package installer (`install_homeassistant_stub`) — not strictly required by `test_schema.py` (which uses its own stub selector), but kept available for future HA-importing tests |
+| `README.md` *(modified)* | Operations + Troubleshooting sections added |
+| `CODE_REVIEW_COMPREHENSIVE.md` *(modified)* | TEST-3 and DOC-2 stories updated with completion notes; this Appendix E added |
+
+### Verification
+
+- `python -m pytest tests/` → **41 passed** (was 25 before this pass; +16 new
+  tests in `test_schema.py`, 0 failures, 0 errors).
+- `python -c "import ast; ast.parse(open('custom_components/venice_ai/config_flow.py').read())"`
+  → config_flow.py syntax OK (the prior Sonnet pass's edits compile cleanly).
+- `tests/test_optionsflow.py` continues to pass standalone — the previous Sonnet
+  pass left it green and this pass did not regress it.
+
+### Notable Items to Catalog (Updated)
+
+The remaining 🟡 Sonnet-rated and 🟢 Fable-rated tasks that are still genuinely
+open after both Sonnet passes:
+
+1. **HIGH-3 — STT Buffer Without Chunking.** Deferred because Venice's ASR
+   endpoint does not support streaming. Client-side chunking with overlap is a
+   non-trivial follow-up. Action: add a README note about the 10 MB limit and
+   track client-side chunking in `TASK_PLAN.md`.
+2. **MED-4 — No Rate Limit Backoff Configuration.** Three retries with
+   exponential backoff (1–30 s) is currently hardcoded in `client.py`. Making
+   this tuneable via options flow is a small change but not user-critical
+   yet (Venice's default rate limits match the hardcoded values well).
+3. **SEC-1 — API Key Logged in Debug Mode.** The `Authorization` header is not
+   currently logged, but no header-filter guard exists in case future
+   debug logs touch the headers dict. A one-line `debug_headers = {k: v for
+   k, v in headers.items() if k != "Authorization"}` is the recommended fix.
+4. **SEC-2 — No Input Validation on Tool Arguments.** Tool calls from the LLM
+   are passed straight through. Adding `voluptuous` schema validation (using
+   the existing `_format_venice_schema` machinery tested by TEST-3) would be
+   the natural follow-up — TEST-3's tests are now in place to verify that
+   layer.
+5. **PERF-1 — Models Cache Not Shared.** Each `AsyncVeniceAIClient` instance
+   keeps its own `Models` cache. A module-level `lru_cache` keyed by
+   `(api_key_hash, model_type)` would deduplicate across config entries.
+6. **PERF-3 — JSON Encoding of Tool Calls.** Assistant messages with
+   `tool_calls` are JSON-encoded for storage. A typed dataclass
+   (`AssistantToolMessage`) would avoid the round-trip and is a straightforward
+   refactor.
+7. **PERF-4 — Connection Pooling Not Configured.** `httpx.AsyncClient` is
+   reused but no `httpx.Limits(max_keepalive_connections=…, max_connections=…)`
+   are set. A two-line addition with sensible defaults.
+8. **ARCH-3 — Event-Driven Repairs.** The coordinator currently raises repair
+   issues by calling `_async_on_coordinator_update` from the coordinator hook.
+   Migrating to HA's `eventbus` for repair signalling would decouple this.
+9. **ARCH-4 — Configuration Validation Layer.** A small `validate_config()`
+   helper that checks option coherence (e.g. `max_tokens ≤ model_limit`,
+   `temperature ∈ [0, 2]`) would catch misconfigurations early.
+10. **DOC-1 — Inline Docstrings.** A pass over `conversation.py`, `client.py`,
+    `coordinator.py`, and `config_flow.py` to add docstrings to every public
+    function is straightforward but tedious.
+11. **QUAL-1, QUAL-2, QUAL-3, QUAL-4 — Code Quality Pass.** Standardising
+    error-message phrasing, extracting magic numbers, removing dead comments,
+    and finishing type-hint coverage are all mechanical cleanup tasks.
+12. **MAINT-1, MAINT-2, MAINT-3 — Maintainability Pass.** Centralised constants
+    dataclass, logging-level audit, and HA-version feature matrix are the
+    remaining maintainability items.
+
+### Section 5 Action-Plan Reconciliation
+
+Section 5's ✅ marks remain aspirational for items not covered by Appendix C, D,
+or E. The next pass should:
+
+* Replace ✅ with ⚪ for items still genuinely open (HIGH-3, SEC-1, SEC-2,
+  MED-4, PERF-1, PERF-3, PERF-4, ARCH-3, ARCH-4, DOC-1, QUAL-1–4, MAINT-1–3).
+* Keep ✅ for items now verified by Appendices C/D/E (CRIT-1, HIGH-1, HIGH-2,
+  HIGH-4, MED-1, MED-2, MED-3, LOW-1, LOW-2, LOW-3, LOW-4, PERF-2, TEST-1,
+  TEST-2, TEST-3, DOC-2, DOC-3, DOC-4, ARCH-1, ARCH-2).
+
+### Cumulative Sonnet-Pass Impact
+
+* **New tests:** +16 schema tests (25 → 41).
+* **New user-facing docs:** README Operations + Troubleshooting sections.
+* **Cross-file coupling:** The TEST-3 work and the existing DOC-2 recommendation
+  were completed in a single pass because the review explicitly listed both as
+  Sonnet-rated and they share no architectural dependency on each other.
+* **Test design choice:** `test_schema.py` uses AST extraction rather than
+  stubbing the full Home Assistant package, because (a) `conversation.py` imports
+  a large surface area of HA that would require many stub classes, and (b) the
+  helpers themselves are pure functions that don't depend on HA at runtime
+  (only at type-check time). This pattern is documented in the test module's
+  docstring so future contributors know which approach to pick for new tests.
 
 

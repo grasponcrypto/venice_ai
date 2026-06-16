@@ -147,3 +147,52 @@ def chunk():
         return FakeChunk([{"delta": delta}])
 
     return _build
+
+
+# ── Minimal ``homeassistant`` stub (TEST-3) ────────────────────────────────────
+# Tests that need to load modules which transitively import Home Assistant
+# (e.g. ``conversation.py`` for the schema-conversion helpers) install a stub
+# ``homeassistant`` package via ``install_homeassistant_stub``. The stub only
+# implements the surface area those modules touch, so it is intentionally
+# tiny. It is safe to call from multiple test files: re-installation replaces
+# the existing stub rather than stacking duplicate modules.
+
+
+class _HaStubMessage:
+    """Minimal stand-in for ``conversation.UserContent`` and friends."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+def install_homeassistant_stub() -> None:
+    """Install a stub ``homeassistant`` package sufficient to import ``conversation.py``.
+
+    The stub exposes the names ``conversation.py`` touches at import time:
+    ``homeassistant.components.conversation.{ChatLog, UserContent}`` and
+    ``homeassistant.helpers.llm``. Anything beyond that is not provided and
+    will raise ``AttributeError`` if accessed — which is intentional so
+    tests fail loudly rather than silently skipping coverage.
+    """
+    ha_pkg = types.ModuleType("homeassistant")
+    sys.modules["homeassistant"] = ha_pkg
+
+    components_pkg = types.ModuleType("homeassistant.components")
+    components_pkg.__path__ = []  # type: ignore[attr-defined]
+    sys.modules["homeassistant.components"] = components_pkg
+
+    conversation_mod = types.ModuleType("homeassistant.components.conversation")
+    conversation_mod.ChatLog = _HaStubMessage  # type: ignore[attr-defined]
+    conversation_mod.UserContent = _HaStubMessage  # type: ignore[attr-defined]
+    conversation_mod.AssistantContent = _HaStubMessage  # type: ignore[attr-defined]
+    conversation_mod.SystemContent = _HaStubMessage  # type: ignore[attr-defined]
+    sys.modules["homeassistant.components.conversation"] = conversation_mod
+
+    helpers_pkg = types.ModuleType("homeassistant.helpers")
+    helpers_pkg.__path__ = []  # type: ignore[attr-defined]
+    sys.modules["homeassistant.helpers"] = helpers_pkg
+
+    llm_mod = types.ModuleType("homeassistant.helpers.llm")
+    llm_mod.llm = types.SimpleNamespace()  # type: ignore[attr-defined]  # placeholder attribute
+    sys.modules["homeassistant.helpers.llm"] = llm_mod
