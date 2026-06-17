@@ -81,6 +81,8 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         try:
             tts_models = await self.client.models.list(model_type="tts")
             if isinstance(tts_models, list):
+                for m in tts_models:
+                    m["model_type"] = "tts"
                 data["audio_models"].extend(tts_models)
                 _LOGGER.debug("Coordinator fetched %d TTS models", len(tts_models))
                 # Extract voices from TTS model metadata (voice_models field per model)
@@ -108,6 +110,8 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         try:
             asr_models = await self.client.models.list(model_type="asr")
             if isinstance(asr_models, list):
+                for m in asr_models:
+                    m["model_type"] = "asr"
                 data["audio_models"].extend(asr_models)
                 _LOGGER.debug("Coordinator fetched %d ASR models", len(asr_models))
         except AuthenticationError as err:
