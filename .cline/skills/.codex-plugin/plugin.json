@@ -1,0 +1,26 @@
+{
+  "name": "venice",
+  "displayName": "Venice AI Skills",
+  "version": "0.1.0",
+  "description": "Official agent skills for the Venice.ai API — private-by-default inference for chat, images, video, audio, embeddings, characters, billing, wallet (x402), and crypto RPC.",
+  "author": "Venice.ai",
+  "homepage": "https://docs.venice.ai",
+  "repository": "https://github.com/veniceai/skills",
+  "license": "MIT",
+  "skills": {
+    "path": "./skills"
+  },
+  "tags": [
+    "venice",
+    "llm",
+    "inference",
+    "openai-compatible",
+    "privacy",
+    "x402",
+    "image",
+    "video",
+    "audio",
+    "embeddings",
+    "crypto-rpc"
+  ]
+}

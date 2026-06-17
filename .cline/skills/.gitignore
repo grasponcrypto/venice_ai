@@ -1,0 +1,39 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.history/
+
+# Agent runtime scratch
+.cursor/
+.claude/
+.agents/
+
+# Node (if tooling is added later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python (if tooling is added later)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+out/

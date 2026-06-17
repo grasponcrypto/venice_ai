@@ -12,7 +12,8 @@
         "invalid_auth": "Invalid API key",
         "cannot_connect": "Failed to connect to Venice AI",
         "unknown": "Unexpected error",
-        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
+        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable.",
+        "invalid_tts_voice_for_model": "The selected TTS voice is not available for the chosen TTS model. Please select a valid voice for this model."
       },
       "abort": {
         "already_configured": "Venice AI is already configured",

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "venice",
+  "version": "0.1.0",
+  "description": "Official agent skills for the Venice.ai API.",
+  "homepage": "https://docs.venice.ai",
+  "license": "MIT",
+  "skills": [
+    { "id": "venice-api-overview", "path": "skills/venice-api-overview/SKILL.md" },
+    { "id": "venice-auth", "path": "skills/venice-auth/SKILL.md" },
+    { "id": "venice-chat", "path": "skills/venice-chat/SKILL.md" },
+    { "id": "venice-responses", "path": "skills/venice-responses/SKILL.md" },
+    { "id": "venice-embeddings", "path": "skills/venice-embeddings/SKILL.md" },
+    { "id": "venice-image-generate", "path": "skills/venice-image-generate/SKILL.md" },
+    { "id": "venice-image-edit", "path": "skills/venice-image-edit/SKILL.md" },
+    { "id": "venice-audio-speech", "path": "skills/venice-audio-speech/SKILL.md" },
+    { "id": "venice-audio-music", "path": "skills/venice-audio-music/SKILL.md" },
+    { "id": "venice-audio-transcription", "path": "skills/venice-audio-transcription/SKILL.md" },
+    { "id": "venice-video", "path": "skills/venice-video/SKILL.md" },
+    { "id": "venice-models", "path": "skills/venice-models/SKILL.md" },
+    { "id": "venice-characters", "path": "skills/venice-characters/SKILL.md" },
+    { "id": "venice-api-keys", "path": "skills/venice-api-keys/SKILL.md" },
+    { "id": "venice-billing", "path": "skills/venice-billing/SKILL.md" },
+    { "id": "venice-x402", "path": "skills/venice-x402/SKILL.md" },
+    { "id": "venice-crypto-rpc", "path": "skills/venice-crypto-rpc/SKILL.md" },
+    { "id": "venice-augment", "path": "skills/venice-augment/SKILL.md" },
+    { "id": "venice-errors", "path": "skills/venice-errors/SKILL.md" }
+  ]
+}

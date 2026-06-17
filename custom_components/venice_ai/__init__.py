@@ -519,6 +519,35 @@ async def async_reload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) ->
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
+    """MAINT-2: migrate config entries to the current version.
+
+    The ``version`` and ``minor_version`` keys on the config entry are
+    inspected by HA to decide whether ``async_migrate_entry`` needs to run.
+    Each migration should bump the version field once it completes so that
+    the migration runs exactly once per upgrade.
+
+    Currently the integration is at version 1 / minor 1, so this is the
+    canonical entry point for future upgrade logic. Returning ``True``
+    without bumping the version when there is nothing to do keeps the
+    method in place as a stable extension point.
+    """
+    _LOGGER.debug(
+        "Migrating Venice AI entry %s from version %s.%s to current version 1.1",
+        entry.entry_id,
+        entry.version,
+        entry.minor_version,
+    )
+    # No data migration required yet; the dict-based storage layout has been
+    # stable. Place future migrations (e.g. moving keys from data→options,
+    # renaming CONF_* constants) inside this function.
+    if entry.version > 1 or (entry.version == 1 and entry.minor_version >= 1):
+        return True
+    entry.version = 1
+    entry.minor_version = 1
+    return True
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
     """Unload Venice AI.
 

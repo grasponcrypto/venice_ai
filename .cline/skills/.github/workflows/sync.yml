@@ -1,0 +1,51 @@
+name: Sync with Venice OpenAPI
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "skills/**"
+      - "scripts/sync_from_swagger.py"
+      - ".github/workflows/sync.yml"
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml
+
+      - name: Diff swagger.yaml against SKILL.md files
+        id: sync
+        run: |
+          set +e
+          python scripts/sync_from_swagger.py \
+            --spec https://api.venice.ai/doc/api/swagger.yaml \
+            | tee sync-report.txt
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-report
+          path: sync-report.txt
+
+      - name: Open or update drift issue
+        if: steps.sync.outputs.exit_code != '0' && github.event_name == 'schedule'
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Venice OpenAPI drift detected"
+          labels: sync, automation
+          content-filepath: sync-report.txt
+
+      - name: Fail on drift
+        if: steps.sync.outputs.exit_code != '0'
+        run: exit 1

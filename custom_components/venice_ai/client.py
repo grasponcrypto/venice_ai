@@ -16,11 +16,52 @@ _LOGGER = logging.getLogger(__name__)
 # Import retry / timeout constants; fall back to hard-coded defaults when
 # const.py is not yet importable (e.g. during isolated unit tests).
 try:
-    from .const import MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MAX_DELAY  # MED-4
+    from .const import (
+        MAX_RETRIES,  # MED-4
+        RETRY_BASE_DELAY,
+        RETRY_MAX_DELAY,
+        DEFAULT_HTTP_TIMEOUT,  # QUAL-2: tunable per-request timeout default.
+        DEFAULT_HTTP_KEEPALIVE,  # QUAL-2: connection-pool sizing.
+        DEFAULT_HTTP_MAX_CONNECTIONS,  # QUAL-2: connection-pool sizing.
+        DEFAULT_CHAT_TIMEOUT,
+        DEFAULT_CHAT_STREAM_TIMEOUT,
+        DEFAULT_TTS_TIMEOUT,
+        DEFAULT_STT_TIMEOUT,
+        DEFAULT_IMAGE_TIMEOUT,
+    )
 except ImportError:  # pragma: no cover
     MAX_RETRIES = 3
     RETRY_BASE_DELAY = 1.0
     RETRY_MAX_DELAY = 30.0
+    DEFAULT_HTTP_TIMEOUT = 30.0
+    DEFAULT_HTTP_KEEPALIVE = 5
+    DEFAULT_HTTP_MAX_CONNECTIONS = 10
+    DEFAULT_CHAT_TIMEOUT = 120.0
+    DEFAULT_CHAT_STREAM_TIMEOUT = 300.0
+    DEFAULT_TTS_TIMEOUT = 60.0
+    DEFAULT_STT_TIMEOUT = 60.0
+    DEFAULT_IMAGE_TIMEOUT = 120.0
+
+
+def _sanitize_header_value(value: str | None) -> str:
+    """SEC-1: scrub CR/LF/control bytes from header values before they go on the wire.
+
+    httpx will raise on raw CR/LF but a malicious value crafted with other
+    control characters can still confuse downstream logging or proxy layers.
+    Strip everything below 0x20 (space) before exposing the API key in any
+    Authorization header.
+    """
+    if not value:
+        return ""
+    return "".join(ch for ch in value if ord(ch) >= 0x20).strip()
+
+
+# PERF-1: process-wide cache of model lists. Multiple client instances (e.g.
+# across config entries or per-test harnesses) reuse a single result for
+# CACHE_TTL_SECONDS. The cache stores plain dicts so it is independent of any
+# specific httpx client lifetime.
+_PROCESS_MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_PROCESS_MODEL_CACHE_TTL = 3600  # seconds; see also Models._CACHE_TTL_SECONDS
 
 
 @dataclass
@@ -161,7 +202,7 @@ class ChatCompletions:
                 f"{self.client._base_url}/chat/completions",
                 headers=self.client._headers,
                 json=data,
-                timeout=300.0,
+                timeout=DEFAULT_CHAT_STREAM_TIMEOUT,
             )
             response = await self.client._http_client.send(request, stream=True)
             response.raise_for_status()
@@ -242,7 +283,7 @@ class ChatCompletions:
                 "/chat/completions",
                 headers=self.client._headers,
                 json=payload,
-                timeout=120.0,
+                timeout=DEFAULT_CHAT_TIMEOUT,
             )
             response.raise_for_status()
             result = response.json()
@@ -294,8 +335,25 @@ class Models:
         self._cache: dict[str, tuple[list[dict], float]] = {}
 
     async def list(self, model_type: str = "text") -> list[dict]:
-        """List available models with TTL caching."""
+        """List available models with TTL caching.
+
+        PERF-1: consults a process-wide cache first so multiple client
+        instances (config entries, tests) share one network round-trip per
+        model_type per TTL window. Falls back to the per-instance cache
+        (``self._cache``) and then to the live API if both are cold.
+        """
         now = time.monotonic()
+        # PERF-1: process-wide cache check (keyed by model_type)
+        global_cached = _PROCESS_MODEL_CACHE.get(model_type)
+        if global_cached is not None:
+            timestamp, models = global_cached
+            if now - timestamp < _PROCESS_MODEL_CACHE_TTL:
+                _LOGGER.debug(
+                    "PERF-1: process-wide cache hit for %s models (%d entries)",
+                    model_type,
+                    len(models),
+                )
+                return models
         cached = self._cache.get(model_type)
         if cached is not None:
             models, timestamp = cached
@@ -317,6 +375,9 @@ class Models:
             model_data = response.json()
             models = model_data.get("data", [])
             self._cache[model_type] = (models, now)
+            # PERF-1: write through to process-wide cache so other clients in
+            # the same Python process can reuse this result.
+            _PROCESS_MODEL_CACHE[model_type] = (now, models)
             _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:
@@ -365,7 +426,7 @@ class Speech:
                 "/audio/speech",
                 headers=audio_headers,
                 json=data,
-                timeout=60.0,
+                timeout=DEFAULT_TTS_TIMEOUT,
             )
             response.raise_for_status()
             audio_data = response.content
@@ -416,7 +477,7 @@ class Speech:
                 "/audio/speech",
                 headers=audio_headers,
                 json=data,
-                timeout=60.0,
+                timeout=DEFAULT_TTS_TIMEOUT,
             )
             response.raise_for_status()
 
@@ -480,7 +541,7 @@ class Transcriptions:
                 headers=multipart_headers,
                 files=files,
                 data=data,
-                timeout=60.0,
+                timeout=DEFAULT_STT_TIMEOUT,
             )
             response.raise_for_status()
             if response_format == "json":
@@ -534,7 +595,7 @@ class Images:
                 "/images/generations",
                 headers=self.client._headers,
                 json=payload,
-                timeout=120.0,
+                timeout=DEFAULT_IMAGE_TIMEOUT,
             )
             response.raise_for_status()
             return response.json()
@@ -561,11 +622,18 @@ class AsyncVeniceAIClient:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the client."""
-        self._api_key = api_key
+        # SEC-1: scrub the API key before it is used to build any header value.
+        safe_api_key = _sanitize_header_value(api_key)
+        self._api_key = safe_api_key
         self._base_url = base_url.rstrip("/")
+        # QUAL-2 / PERF-4: pool sizing and default timeout sourced from constants
+        # so a single edit in const.py changes the whole client.
         self._http_client = http_client if http_client else httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            timeout=httpx.Timeout(DEFAULT_HTTP_TIMEOUT),
+            limits=httpx.Limits(
+                max_keepalive_connections=DEFAULT_HTTP_KEEPALIVE,
+                max_connections=DEFAULT_HTTP_MAX_CONNECTIONS,
+            ),
         )
         self._should_close_client = not http_client
         self._closed = False
@@ -575,7 +643,7 @@ class AsyncVeniceAIClient:
         self.metrics = VeniceAIMetrics()
 
         self._headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {safe_api_key}",
             "Content-Type": "application/json",
             "Accept-Encoding": "gzip, br",
         }

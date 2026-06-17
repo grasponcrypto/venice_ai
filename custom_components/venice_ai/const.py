@@ -16,7 +16,7 @@ except ImportError:
 
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
-RECOMMENDED_CHAT_MODEL = "llama-3.3-70b"  # Venice AI default model with function calling support
+RECOMMENDED_CHAT_MODEL = "qwen-3-7-plus"  # Venice AI default model with function calling support
 CONF_MAX_TOKENS = "max_tokens"
 RECOMMENDED_MAX_TOKENS = 512
 CONF_TOP_P = "top_p"
@@ -26,14 +26,17 @@ RECOMMENDED_TEMPERATURE = 1.0
 
 # Venice AI reasoning model options
 CONF_STRIP_THINKING_RESPONSE = "strip_thinking_response"
+RECOMMENDED_STRIP_THINKING_RESPONSE = True
 CONF_DISABLE_THINKING = "disable_thinking"
-RECOMMENDED_DISABLE_THINKING = False
+# Disable thinking by default for automations to reduce latency, token usage, and cost,
+# as complex reasoning is rarely needed for standard Home Assistant actions.
+RECOMMENDED_DISABLE_THINKING = True
 
 # MED-3: Opt-in streaming for conversation responses. When enabled, the
 # conversation entity consumes the Venice AI streaming chat API via the
 # VeniceConversationService and accumulates deltas (including tool calls).
 CONF_STREAM_RESPONSE = "stream_response"
-RECOMMENDED_STREAM_RESPONSE = False
+RECOMMENDED_STREAM_RESPONSE = True
 
 # Venice AI TTS options
 CONF_TTS_MODEL = "tts_model"
@@ -89,3 +92,14 @@ FEATURE_MIN_VERSIONS: dict[str, str] = {
     "conversation_entity": "2023.10.0",
     "sensor_total_increasing": "2021.12.0",
 }
+
+# QUAL-2 / PERF-4: httpx connection-pool and per-request timeout defaults.
+# Centralised here so users tuning behaviour can adjust a single value.
+DEFAULT_HTTP_TIMEOUT = 30.0
+DEFAULT_HTTP_KEEPALIVE = 5
+DEFAULT_HTTP_MAX_CONNECTIONS = 10
+DEFAULT_CHAT_TIMEOUT = 120.0
+DEFAULT_CHAT_STREAM_TIMEOUT = 300.0
+DEFAULT_TTS_TIMEOUT = 60.0
+DEFAULT_STT_TIMEOUT = 60.0
+DEFAULT_IMAGE_TIMEOUT = 120.0

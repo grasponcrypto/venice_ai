@@ -37,6 +37,7 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONF_STRIP_THINKING_RESPONSE,
+    RECOMMENDED_STRIP_THINKING_RESPONSE,
     CONF_DISABLE_THINKING,
     RECOMMENDED_DISABLE_THINKING,
     CONF_STREAM_RESPONSE,
@@ -207,6 +208,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
         """Initialize options flow."""
         super().__init__()
         self._config_entry = config_entry
+        self._tts_model_voices: dict[str, list[str]] = {}
 
     @property
     def config_entry(self) -> ConfigEntry:
@@ -316,8 +318,10 @@ class VeniceAIOptionsFlow(OptionsFlow):
                     # Extract voice IDs from TTS model metadata (voice_models field)
                     seen_voice_ids: set[str] = set()
                     for model in tts_resp:
+                        model_id = model.get("id")
                         voice_models = model.get("voice_models", [])
-                        if isinstance(voice_models, list):
+                        if model_id and isinstance(voice_models, list):
+                            self._tts_model_voices[model_id] = voice_models
                             for vid in voice_models:
                                 if isinstance(vid, str) and vid not in seen_voice_ids:
                                     seen_voice_ids.add(vid)
@@ -550,6 +554,42 @@ class VeniceAIOptionsFlow(OptionsFlow):
             SelectOptionDict(label=api_id, value=api_id) for api_id in api_ids
         ]
 
+    def _validate_numeric_options(
+        self,
+        user_input: dict[str, Any],
+    ) -> dict[str, str]:
+        """ARCH-4: validate numeric option ranges and return per-field error keys.
+
+        Voluptuous' NumberSelector bounds are advisory in the UI but a user can
+        still type a value out of range via ``custom_value`` or by hand-editing
+        the integration's options storage. This defence-in-depth pass rejects
+        such inputs at submit time so the integration never sees values that
+        would break the underlying API.
+        """
+        errors: dict[str, str] = {}
+        max_tokens = user_input.get(CONF_MAX_TOKENS)
+        if isinstance(max_tokens, (int, float)) and not (1 <= max_tokens <= 32768):
+            errors[CONF_MAX_TOKENS] = "max_tokens_out_of_range"
+        top_p = user_input.get(CONF_TOP_P)
+        if isinstance(top_p, (int, float)) and not (0.0 <= top_p <= 1.0):
+            errors[CONF_TOP_P] = "top_p_out_of_range"
+        temperature = user_input.get(CONF_TEMPERATURE)
+        if isinstance(temperature, (int, float)) and not (0.0 <= temperature <= 2.0):
+            errors[CONF_TEMPERATURE] = "temperature_out_of_range"
+        max_tool_iter = user_input.get(CONF_MAX_TOOL_ITERATIONS)
+        if isinstance(max_tool_iter, (int, float)) and not (1 <= max_tool_iter <= 20):
+            errors[CONF_MAX_TOOL_ITERATIONS] = "max_tool_iterations_out_of_range"
+        tts_speed = user_input.get(CONF_TTS_SPEED)
+        if isinstance(tts_speed, (int, float)) and not (0.25 <= tts_speed <= 4.0):
+            errors[CONF_TTS_SPEED] = "tts_speed_out_of_range"
+        timeout = user_input.get(CONF_REQUEST_TIMEOUT)
+        if isinstance(timeout, (int, float)) and not (10.0 <= timeout <= 300.0):
+            errors[CONF_REQUEST_TIMEOUT] = "request_timeout_out_of_range"
+        prompt = user_input.get(CONF_PROMPT)
+        if prompt is not None and not isinstance(prompt, str):
+            errors[CONF_PROMPT] = "prompt_must_be_string"
+        return errors
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -559,7 +599,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
             # Normalise the LLM API field: treat blank string as absent
             if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
                 user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
-            else:
+            elif CONF_LLM_HASS_API in user_input and user_input[CONF_LLM_HASS_API]:
                 # SEC-4 fix: validate custom LLM API ID before accepting
                 try:
                     await llm.async_get_api(
@@ -572,6 +612,22 @@ class VeniceAIOptionsFlow(OptionsFlow):
                         err,
                     )
                     errors[CONF_LLM_HASS_API] = "invalid_llm_api"
+
+            # ARCH-4: validate numeric option ranges (defence-in-depth on top
+            # of NumberSelector bounds).
+            errors.update(self._validate_numeric_options(user_input))
+
+            # Validate TTS voice against selected TTS model to prevent invalid combinations
+            tts_model = user_input.get(CONF_TTS_MODEL, self.config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL))
+            tts_voice = user_input.get(CONF_TTS_VOICE)
+            if tts_voice and tts_model in self._tts_model_voices:
+                valid_voices = self._tts_model_voices[tts_model]
+                if valid_voices and tts_voice not in valid_voices:
+                    errors[CONF_TTS_VOICE] = "invalid_tts_voice_for_model"
+                    _LOGGER.warning(
+                        "Invalid TTS voice '%s' for model '%s'. Valid voices: %s",
+                        tts_voice, tts_model, valid_voices
+                    )
 
             if not errors:
                 return self.async_create_entry(title="", data=user_input)

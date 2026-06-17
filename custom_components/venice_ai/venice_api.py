@@ -46,6 +46,72 @@ class ChatParameters:
 
 
 @dataclass
+class ToolCall:
+    """PERF-3: strongly-typed wrapper around a single tool call.
+
+    Streamed or non-streamed tool calls from the Venice AI chat API are raw
+    ``dict`` objects with arbitrary string-typed arguments. Wrapping them in
+    a dataclass gives downstream consumers type-checked access to the id,
+    function name, and arguments, and lets the conversation entity cache
+    the parsed argument ``dict`` to avoid re-parsing the same JSON string
+    on every iteration.
+
+    ``args_dict`` is lazily populated by :meth:`parsed_args`; the raw
+    ``arguments`` string is preserved for fidelity with the API payload.
+    """
+
+    id: str
+    call_type: str
+    function_name: str
+    arguments: str
+    args_dict: dict[str, Any] | None = None
+
+    @classmethod
+    def from_raw(cls, raw: dict[str, Any]) -> "ToolCall | None":
+        """Return a :class:`ToolCall` from a raw tool-call dict, or None on garbage input.
+
+        Performs minimal validation: ``id`` and function ``name`` must be
+        non-empty strings. Returns ``None`` for malformed payloads so the
+        caller can decide whether to log + skip or propagate an error.
+        """
+        if not isinstance(raw, dict):
+            return None
+        func = raw.get("function")
+        if not isinstance(func, dict):
+            return None
+        call_id = raw.get("id")
+        name = func.get("name")
+        if not isinstance(call_id, str) or not call_id:
+            return None
+        if not isinstance(name, str) or not name:
+            return None
+        return cls(
+            id=call_id,
+            call_type=str(raw.get("type", "function")),
+            function_name=name,
+            arguments=str(func.get("arguments", "")),
+        )
+
+    def parsed_args(self) -> dict[str, Any]:
+        """Return the decoded arguments dict, caching the result on first parse."""
+        if self.args_dict is not None:
+            return self.args_dict
+        import json
+
+        try:
+            decoded = json.loads(self.arguments) if self.arguments else {}
+        except json.JSONDecodeError:
+            decoded = {}
+        if not isinstance(decoded, dict):
+            # SEC-2 (defensive): if the args somehow round-trip to a
+            # non-object, normalise to an empty dict. Callers should
+            # already have rejected non-dict args before invocation.
+            decoded = {}
+        self.args_dict = decoded
+        return decoded
+
+
+@dataclass
 class StreamingChatResult:
     """Accumulated result of a streamed chat completion.
 
@@ -66,6 +132,15 @@ class StreamingChatResult:
     def as_response(self) -> dict[str, Any]:
         """Return a response envelope shaped like the non-streaming API."""
         return {"choices": [{"message": self.as_message()}]}
+
+    def typed_tool_calls(self) -> list[ToolCall]:
+        """PERF-3: return tool calls as :class:`ToolCall` objects, skipping malformed ones."""
+        typed: list[ToolCall] = []
+        for raw in self.tool_calls:
+            tc = ToolCall.from_raw(raw)
+            if tc is not None:
+                typed.append(tc)
+        return typed
 
 
 class VeniceConversationService:
