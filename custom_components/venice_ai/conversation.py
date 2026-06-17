@@ -405,7 +405,7 @@ class VeniceAIConversationEntity(ConversationEntity):
             return self._chat_logs[cid]
 
         # New conversation
-        chat_log = ChatLog(conversation_id=cid, content=[])
+        chat_log = ChatLog(self.hass, conversation_id=cid, content=[])
         self._chat_logs[cid] = chat_log
         self._last_access[cid] = time.monotonic()
         # Evict least-recently-used if over the limit
