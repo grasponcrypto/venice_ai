@@ -31,6 +31,16 @@ from .client import AsyncVeniceAIClient, VeniceAIError
 
 _LOGGER = logging.getLogger(__name__)
 
+# Fix 2: Moved out of async_process_audio_stream to avoid re-creating on every call.
+# Each tuple is (metadata_attr_name, property_name, human_label).
+_STT_VALIDATION_ATTRS = [
+    ("format", "supported_formats", "audio format"),
+    ("codec", "supported_codecs", "audio codec"),
+    ("bit_rate", "supported_bit_rates", "bit rate"),
+    ("sample_rate", "supported_sample_rates", "sample rate"),
+    ("channel", "supported_channels", "channel count"),
+]
+
 
 def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
     """Convert raw PCM data to WAV format."""
@@ -133,14 +143,8 @@ class VeniceAISTT(SpeechToTextEntity):
         for transcriptions.
         """
         # Validate metadata against declared supported formats
-        _VALIDATION_ATTRS = [
-            ("format", self.supported_formats, "audio format"),
-            ("codec", self.supported_codecs, "audio codec"),
-            ("bit_rate", self.supported_bit_rates, "bit rate"),
-            ("sample_rate", self.supported_sample_rates, "sample rate"),
-            ("channel", self.supported_channels, "channel count"),
-        ]
-        for attr, supported, label in _VALIDATION_ATTRS:
+        for attr, prop, label in _STT_VALIDATION_ATTRS:
+            supported = getattr(self, prop)
             if getattr(metadata, attr) not in supported:
                 _LOGGER.error(
                     "Unsupported %s: %s. Only %s is supported.",

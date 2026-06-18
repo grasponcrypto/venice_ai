@@ -5,7 +5,7 @@ from datetime import timedelta
 DOMAIN = "venice_ai"
 
 # Coordinator refresh interval — must be a timedelta for DataUpdateCoordinator
-UPDATE_INTERVAL = timedelta(hours=1)
+UPDATE_INTERVAL = timedelta(hours=12)
 
 # Centralized voluptuous_openapi detection
 try:

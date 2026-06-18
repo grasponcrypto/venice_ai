@@ -65,10 +65,6 @@ _LOGGER = logging.getLogger(__name__)
 # Default system prompt for Venice AI
 DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant controlling a smart home. You can control lights, switches, climate, media players, and other devices. Always be concise and helpful."""
 
-# Maximum number of tool iterations to prevent infinite loops
-MAX_TOOL_ITERATIONS = 5
-
-
 def _strip_thinking(text: str) -> str:
     """Remove <think>…</think> (or  thinking… end of thinking ) blocks from model output.
 
@@ -592,7 +588,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     "tool_calls": tool_calls,
                 })
                 assistant_content = AssistantContent(
-                    agent_id="venice_ai",
+                    agent_id=DOMAIN,
                     content=encoded_content,
                 )
                 chat_log.content.append(assistant_content)
@@ -722,7 +718,7 @@ class VeniceAIConversationEntity(ConversationEntity):
 
         # Persist the final assistant turn so subsequent calls see the full history.
         chat_log.content.append(
-            AssistantContent(agent_id="venice_ai", content=assistant_response_content)
+            AssistantContent(agent_id=DOMAIN, content=assistant_response_content)
         )
         _trim_chat_log(chat_log)
 

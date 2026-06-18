@@ -84,8 +84,8 @@ class VeniceAITTS(TextToSpeechEntity):
         return [
             ATTR_VOICE,
             ATTR_AUDIO_OUTPUT,
-            "tts_model",
-            "tts_speed",
+            CONF_TTS_MODEL,
+            CONF_TTS_SPEED,
         ]
 
     @property

@@ -13,7 +13,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .client import AsyncVeniceAIClient, VeniceAIError
+from .client import VeniceAIError
+from .venice_api import ChatParameters, VeniceConversationService
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
@@ -45,7 +46,7 @@ async def async_setup_entry(
             "AI Task platform is not available in this Home Assistant version"
         )
         return
-    _LOGGER.info("Setting up AI Task entities for entry %s", entry.entry_id)
+    _LOGGER.debug("Setting up AI Task entities for entry %s", entry.entry_id)
     from . import VeniceAIRuntimeData
 
     runtime_data: VeniceAIRuntimeData = entry.runtime_data
@@ -56,12 +57,12 @@ async def async_setup_entry(
         )
         return
     entity = VeniceAITaskEntity(entry)
-    _LOGGER.info("Created VeniceAITaskEntity: %s", entity.unique_id)
+    _LOGGER.debug("Created VeniceAITaskEntity: %s", entity.unique_id)
     # Store entity reference in runtime_data so the service handler can find it
     # without using hass.data (Architecture 7.1 fix)
     runtime_data.ai_task_entity = entity
     async_add_entities([entity])
-    _LOGGER.info("Added VeniceAITaskEntity to Home Assistant")
+    _LOGGER.debug("Added VeniceAITaskEntity to Home Assistant")
 
 
 if not _HAS_AI_TASK:
@@ -90,9 +91,11 @@ else:
                 model="AI Task",
                 entry_type=dr.DeviceEntryType.SERVICE,
             )
-            self._client: AsyncVeniceAIClient = entry.runtime_data.client
+            # Fix 6: delegate API calls through the service layer so retry
+            # logic, metrics, and any future middleware are applied consistently.
+            self._service = VeniceConversationService(entry.runtime_data.client)
             self._attr_supported_features = ai_task.AITaskEntityFeature.GENERATE_DATA
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Initialized VeniceAITaskEntity for entry %s (runtime_data=%s, unique_id=%s)",
                 entry.entry_id,
                 bool(entry.runtime_data),
@@ -164,13 +167,13 @@ else:
             temperature = self.entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
 
             try:
-                response_data = await self._client.chat.create_non_streaming(
+                # Fix 6: use the service layer instead of calling the client directly.
+                chat_params = ChatParameters(
                     model=model,
-                    messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    stream=False,
                 )
+                response_data = await self._service.chat(messages, chat_params)
 
                 if not response_data or not response_data.get("choices"):
                     raise HomeAssistantError("Invalid Venice AI response")
