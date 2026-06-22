@@ -407,11 +407,11 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             errors["base"] = "missing_api_key"
             return chat_options, tts_info, stt_options, errors
 
-        try:
-            async with AsyncVeniceAIClient(
-                api_key=api_key,
-                http_client=get_async_client(self.hass),
-            ) as client:
+        async with AsyncVeniceAIClient(
+            api_key=api_key,
+            http_client=get_async_client(self.hass),
+        ) as client:
+            try:
                 _LOGGER.debug("Fetching text models for options flow")
                 text_resp = await client.models.list(model_type="text")
                 if isinstance(text_resp, list):
@@ -421,13 +421,29 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                         if isinstance(m, dict) and m.get("id")
                     ]
                     _LOGGER.debug("Found %d text models", len(chat_options))
+            except AuthenticationError:
+                _LOGGER.error("Authentication error fetching text models")
+                errors["base"] = "invalid_auth"
+            except VeniceAIError as err:
+                _LOGGER.warning("Failed to fetch text models: %s", err)
+            except Exception:
+                _LOGGER.exception("Unexpected error fetching text models")
 
+            try:
                 _LOGGER.debug("Fetching TTS models for options flow")
                 tts_resp = await client.models.list(model_type="tts")
                 if isinstance(tts_resp, list):
                     tts_info = _extract_tts_model_info(tts_resp)
                     _LOGGER.debug("Found %d TTS models with voices", len(tts_info))
+            except AuthenticationError:
+                _LOGGER.error("Authentication error fetching TTS models")
+                errors["base"] = "invalid_auth"
+            except VeniceAIError as err:
+                _LOGGER.warning("Failed to fetch TTS models: %s", err)
+            except Exception:
+                _LOGGER.exception("Unexpected error fetching TTS models")
 
+            try:
                 _LOGGER.debug("Fetching ASR models for options flow")
                 asr_resp = await client.models.list(model_type="asr")
                 if isinstance(asr_resp, list):
@@ -437,16 +453,13 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                         if isinstance(m, dict) and m.get("id")
                     ]
                     _LOGGER.debug("Found %d STT models", len(stt_options))
-
-        except AuthenticationError:
-            _LOGGER.error("Authentication error fetching models for options flow")
-            errors["base"] = "invalid_auth"
-        except VeniceAIError as err:
-            _LOGGER.error("Connection error fetching models for options flow: %s", err)
-            errors["base"] = "cannot_connect"
-        except Exception:
-            _LOGGER.exception("Unexpected error fetching models for options flow")
-            errors["base"] = "unknown"
+            except AuthenticationError:
+                _LOGGER.error("Authentication error fetching ASR models")
+                errors["base"] = "invalid_auth"
+            except VeniceAIError as err:
+                _LOGGER.warning("Failed to fetch ASR models: %s", err)
+            except Exception:
+                _LOGGER.exception("Unexpected error fetching ASR models")
 
         # Fallback to defaults when nothing was fetched.
         if not chat_options:
