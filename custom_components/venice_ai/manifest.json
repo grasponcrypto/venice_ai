@@ -1,13 +1,17 @@
 {
     "domain": "venice_ai",
-    "name": "VeniceAI",
+    "name": "VeniceAI Conversation",
     "version": "1.0.0",
     "documentation": "https://github.com/grasponcrypto/venice_ai",
-    "requirements": ["aiohttp>=3.8.0"],
+    "issue_tracker": "https://github.com/grasponcrypto/venice_ai/issues",
+    "requirements": [
+        "voluptuous-openapi>=0.0.4"
+    ],
     "dependencies": ["conversation"],
-    "after_dependencies": ["assist_pipeline", "intent"],
+    "after_dependencies": ["ai_task", "assist_pipeline", "intent"],
     "codeowners": ["@grasponcrypto"],
     "iot_class": "cloud_polling",
     "integration_type": "service",
-    "config_flow": true
+    "config_flow": true,
+    "homeassistant": "2024.4.0"
 }
