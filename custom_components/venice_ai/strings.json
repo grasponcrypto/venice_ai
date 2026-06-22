@@ -12,8 +12,7 @@
         "invalid_auth": "Invalid API key",
         "cannot_connect": "Failed to connect to Venice AI",
         "unknown": "Unexpected error",
-        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable.",
-        "invalid_tts_voice_for_model": "The selected TTS voice is not available for the chosen TTS model. Please select a valid voice for this model."
+        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
       },
       "abort": {
         "already_configured": "Venice AI is already configured",
@@ -35,21 +34,17 @@
             "strip_thinking_response": "Strip thinking response (for reasoning models)",
             "disable_thinking": "Disable thinking (for reasoning models)",
             "max_tool_iterations": "Max Tool Iterations",
-            "tts_model": "TTS Model",
-            "tts_voice": "TTS Voice",
+            "tts_model_voice": "TTS Voice (Model → Voice)",
             "tts_response_format": "TTS Response Format",
             "tts_speed": "TTS Speed",
             "stt_model": "STT Model",
             "stt_response_format": "STT Response Format",
             "stt_timestamps": "STT Include Timestamps"
-          },
-          "data_description": {
-            "tts_voice": "If you change the TTS Model, submit once to refresh the available voices for that model."
           }
         }
       },
       "error": {
-        "invalid_tts_voice_for_model": "The selected voice is not available for the chosen TTS model. Please select a voice from the list.",
+        "invalid_tts_voice_for_model": "The selected voice entry is invalid. Please select a valid 'Model → Voice' entry from the list.",
         "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
       }
     },

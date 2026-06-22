@@ -503,7 +503,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
         coordinator=coordinator,
     )
 
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # NOTE: No manual add_update_listener is needed here.  VeniceAIOptionsFlow
+    # subclasses OptionsFlowWithReload (HA ≥ 2024.1) which automatically
+    # triggers an integration reload when the user saves options.
 
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -14,6 +14,16 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
+
+# OptionsFlowWithReload was introduced in HA 2024.1 and automatically reloads
+# the integration when options are saved, removing the need for a manual
+# add_update_listener in __init__.py.  We fall back to plain OptionsFlow so
+# the integration still loads on older cores (manifest minimum is 2024.4.0,
+# so the try-branch will always win in practice).
+try:
+    from homeassistant.config_entries import OptionsFlowWithReload as _OptionsFlowBase
+except ImportError:  # pragma: no cover – only hit on very old HA cores
+    _OptionsFlowBase = OptionsFlow  # type: ignore[assignment, misc]
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, llm, selector
@@ -74,6 +84,33 @@ try:
 except ImportError:
     _LOGGER.warning("Could not import DEFAULT_SYSTEM_PROMPT from conversation.py, using fallback.")
     DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
+
+# ---------------------------------------------------------------------------
+# Combined TTS model + voice selector
+# ---------------------------------------------------------------------------
+# Instead of two separate dropdowns (model, then voice) that require a
+# re-render handshake to stay in sync, we expose a **single** searchable
+# dropdown whose entries look like:
+#
+#   "kokoro → af_heart"
+#   "kokoro → af_sky"
+#   "outertts → nova"
+#
+# The user types a model name to filter, picks an entry, and both model and
+# voice are set atomically in one submit.  No second page, no silent
+# re-render, no abandonment risk.
+#
+# On save the combined value is split back into CONF_TTS_MODEL / CONF_TTS_VOICE
+# for storage — the rest of the integration is unchanged.
+# ---------------------------------------------------------------------------
+
+# Visual separator used inside combined values.  Space-arrow-space is easy to
+# read and extremely unlikely to appear inside a Venice AI model or voice ID.
+_TTS_MV_SEP = " → "
+
+# Form-only schema key.  This key is **never** written to config entry options;
+# it is parsed on submit and stored as CONF_TTS_MODEL + CONF_TTS_VOICE.
+_CONF_TTS_MODEL_VOICE = "tts_model_voice"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -179,6 +216,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         return VeniceAIOptionsFlow(config_entry)
 
 
+# ---------------------------------------------------------------------------
+# TTS model metadata helpers
+# ---------------------------------------------------------------------------
+
 class _TTSModelInfo:
     """Lightweight container for a TTS model and its voices."""
 
@@ -186,68 +227,6 @@ class _TTSModelInfo:
         self.model_id = model_id
         self.voices = voices
         self.default_voice = default_voice
-
-
-def _resolve_tts_model(
-    user_input: dict[str, Any] | None,
-    saved_options: dict[str, Any],
-    tts_info: dict[str, _TTSModelInfo],
-) -> str:
-    """Return the TTS model that should drive the voice selector.
-
-    Priority:
-    1. A model present in the current form submission.
-    2. The previously saved option.
-    3. The recommended default.
-    """
-    if user_input is not None:
-        submitted = user_input.get(CONF_TTS_MODEL)
-        if isinstance(submitted, str) and submitted in tts_info:
-            return submitted
-
-    saved = saved_options.get(CONF_TTS_MODEL)
-    if isinstance(saved, str) and saved in tts_info:
-        return saved
-
-    if RECOMMENDED_TTS_MODEL in tts_info:
-        return RECOMMENDED_TTS_MODEL
-
-    first = next(iter(tts_info))
-    return first if isinstance(first, str) else RECOMMENDED_TTS_MODEL
-
-
-def _resolve_tts_voice(
-    selected_model: str,
-    tts_info: dict[str, _TTSModelInfo],
-    user_input: dict[str, Any] | None,
-    saved_options: dict[str, Any],
-) -> str:
-    """Return the voice that should be pre-selected for a given model.
-
-    Priority:
-    1. A voice present in the current form submission (keeps user choice
-       when only other fields changed).
-    2. The previously saved voice if it is valid for the selected model.
-    3. The model's advertised default voice.
-    """
-    info = tts_info.get(selected_model)
-    if info is None:
-        return RECOMMENDED_TTS_VOICE
-
-    # Keep user's current selection when the form is re-rendered for
-    # unrelated changes (e.g. adjusting temperature).
-    if user_input is not None:
-        submitted_voice = user_input.get(CONF_TTS_VOICE)
-        if isinstance(submitted_voice, str) and submitted_voice in info.voices:
-            return submitted_voice
-
-    saved_voice = saved_options.get(CONF_TTS_VOICE)
-    if isinstance(saved_voice, str) and saved_voice in info.voices:
-        return saved_voice
-
-    if isinstance(info.default_voice, str):
-        return info.default_voice
-    return info.voices[0] if info.voices else RECOMMENDED_TTS_VOICE
 
 
 def _extract_tts_model_info(models: list[dict[str, Any]]) -> dict[str, _TTSModelInfo]:
@@ -292,51 +271,113 @@ def _extract_tts_model_info(models: list[dict[str, Any]]) -> dict[str, _TTSModel
     return info
 
 
-def _build_voice_options(
-    selected_model: str,
+def _build_combined_tts_options(
     tts_info: dict[str, _TTSModelInfo],
 ) -> list[SelectOptionDict]:
-    """Return SelectOptionDict voices for the selected TTS model."""
-    info = tts_info.get(selected_model)
-    if info is None or not info.voices:
-        return [SelectOptionDict(label=RECOMMENDED_TTS_VOICE, value=RECOMMENDED_TTS_VOICE)]
-    return [SelectOptionDict(label=voice, value=voice) for voice in info.voices]
+    """Return a flat 'model → voice' SelectOptionDict list covering all models.
+
+    Options are sorted by model name so entries for the same model are grouped
+    together in the dropdown.  Because HA renders this in dropdown mode with a
+    live search box, the user can type a model name to instantly filter to only
+    that model's voices, or type a voice name to find it across all models.
+    """
+    options: list[SelectOptionDict] = []
+    for model_id in sorted(tts_info):
+        info = tts_info[model_id]
+        for voice in info.voices:
+            combined = f"{model_id}{_TTS_MV_SEP}{voice}"
+            options.append(SelectOptionDict(label=combined, value=combined))
+    if not options:
+        fallback = f"{RECOMMENDED_TTS_MODEL}{_TTS_MV_SEP}{RECOMMENDED_TTS_VOICE}"
+        options = [SelectOptionDict(label=fallback, value=fallback)]
+    return options
 
 
-class VeniceAIOptionsFlow(OptionsFlow):
+def _parse_combined_tts_value(value: str) -> tuple[str, str] | None:
+    """Split a 'model → voice' string into (model_id, voice).
+
+    Returns ``None`` if the value cannot be parsed into two non-empty parts.
+    """
+    if _TTS_MV_SEP in value:
+        model_id, _, voice = value.partition(_TTS_MV_SEP)
+        if model_id and voice:
+            return model_id, voice
+    return None
+
+
+def _resolve_combined_tts_value(
+    tts_info: dict[str, _TTSModelInfo],
+    user_input: dict[str, Any] | None,
+    saved_options: dict[str, Any],
+) -> str:
+    """Return the 'model → voice' string that should be pre-selected.
+
+    Priority:
+    1. A valid combined value already present in the current form submission.
+    2. Reconstructed from the previously saved CONF_TTS_MODEL + CONF_TTS_VOICE.
+    3. The default voice of the recommended (or first available) model.
+    """
+    # 1. Current submission
+    if user_input is not None:
+        submitted = user_input.get(_CONF_TTS_MODEL_VOICE)
+        if isinstance(submitted, str):
+            parsed = _parse_combined_tts_value(submitted)
+            if parsed:
+                model_id, voice = parsed
+                info = tts_info.get(model_id)
+                if info and voice in info.voices:
+                    return submitted
+
+    # 2. Saved options
+    saved_model = saved_options.get(CONF_TTS_MODEL)
+    saved_voice = saved_options.get(CONF_TTS_VOICE)
+    if isinstance(saved_model, str) and isinstance(saved_voice, str):
+        info = tts_info.get(saved_model)
+        if info and saved_voice in info.voices:
+            return f"{saved_model}{_TTS_MV_SEP}{saved_voice}"
+
+    # 3. Fallback: first voice of recommended (or first available) model
+    for candidate in [RECOMMENDED_TTS_MODEL] + sorted(tts_info):
+        info = tts_info.get(candidate)
+        if info and info.voices:
+            voice = info.default_voice if info.default_voice else info.voices[0]
+            return f"{candidate}{_TTS_MV_SEP}{voice}"
+
+    return f"{RECOMMENDED_TTS_MODEL}{_TTS_MV_SEP}{RECOMMENDED_TTS_VOICE}"
+
+
+# ---------------------------------------------------------------------------
+# Options flow
+# ---------------------------------------------------------------------------
+
+class VeniceAIOptionsFlow(_OptionsFlowBase):
     """Options flow for Venice AI.
 
-    All settings — including TTS model and voice — are shown on a **single
-    form**.  All model/voice data is fetched once when the form opens and
-    cached for the session.
+    Subclasses ``OptionsFlowWithReload`` (HA ≥ 2024.1) so the integration is
+    automatically reloaded once the user saves their options.
 
-    When the user changes the TTS model and submits, the flow detects that
-    the currently shown voice may not be valid for the new model and
-    re-renders the same form with the voice dropdown re-populated with only
-    voices compatible with the newly selected model (defaulting to that
-    model's default voice).  The user is never presented with an invalid
-    pairing and never needs to navigate to a second screen.
+    TTS model and voice are presented as a **single combined searchable
+    dropdown** (``tts_model_voice``).  Each entry is formatted as
+    ``"<model> → <voice>"`` so the user can type a model name to filter the
+    list, then pick any voice for that model in one action.  The combined
+    value is parsed on submit and stored as the separate ``tts_model`` and
+    ``tts_voice`` keys that the rest of the integration already reads.
 
-    If the TTS model is unchanged the form saves immediately on submit.
+    This eliminates the previous two-step flow that required a re-render
+    (or a second form page) whenever the TTS model changed, which was
+    confusing and could result in lost settings if the user closed the
+    second window.
     """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__()
         self._config_entry = config_entry
-        # TTS metadata fetched on first open and reused on re-renders (no extra API calls).
-        self._tts_info: dict[str, _TTSModelInfo] = {}
-        # The TTS model that was shown on the last render, used to detect model changes.
-        self._shown_tts_model: str | None = None
 
     @property
     def config_entry(self) -> ConfigEntry:
         """Return the config entry."""
         return self._config_entry
-
-    def _extract_tts_model_info(self, models: list[dict[str, Any]]) -> dict[str, _TTSModelInfo]:
-        """Build a lookup of model_id -> _TTSModelInfo from API response objects."""
-        return _extract_tts_model_info(models)
 
     async def _fetch_model_metadata(
         self,
@@ -350,9 +391,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
         A fresh API call is always made when the options flow opens so that
         any models Venice.ai has added since the last coordinator refresh are
-        immediately visible.  The coordinator's hourly cache is intentionally
-        bypassed here — the options flow is only opened on user demand and
-        correctness matters more than saving one lightweight API call.
+        immediately visible.
 
         Returns:
             (chat_model_options, tts_model_info, stt_model_options, errors)
@@ -386,7 +425,7 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 _LOGGER.debug("Fetching TTS models for options flow")
                 tts_resp = await client.models.list(model_type="tts")
                 if isinstance(tts_resp, list):
-                    tts_info = self._extract_tts_model_info(tts_resp)
+                    tts_info = _extract_tts_model_info(tts_resp)
                     _LOGGER.debug("Found %d TTS models with voices", len(tts_info))
 
                 _LOGGER.debug("Fetching ASR models for options flow")
@@ -429,58 +468,70 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
         return chat_options, tts_info, stt_options, errors
 
-    def _resolve_tts_model(
-        self,
-        user_input: dict[str, Any] | None,
-        tts_info: dict[str, _TTSModelInfo],
-    ) -> str:
-        """Return the TTS model that should drive the voice selector."""
-        return _resolve_tts_model(user_input, self.config_entry.options, tts_info)
+    async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
+        """Return a list of available HA LLM API IDs as SelectOptionDicts."""
+        none_option = SelectOptionDict(label="None (disabled)", value="")
+        api_ids: list[str] = []
+        try:
+            if hasattr(llm, "async_get_api_list"):
+                api_ids = await llm.async_get_api_list(self.hass)
+            else:
+                try:
+                    await llm.async_get_api(self.hass, "assist")
+                    api_ids = ["assist"]
+                except Exception:
+                    pass
+        except Exception:
+            _LOGGER.debug("Could not fetch LLM API list; using fallback")
+            api_ids = ["assist"]
 
-    def _resolve_tts_voice(
-        self,
-        selected_model: str,
-        tts_info: dict[str, _TTSModelInfo],
-        user_input: dict[str, Any] | None,
-    ) -> str:
-        """Return the voice that should be pre-selected for a given model."""
-        return _resolve_tts_voice(
-            selected_model, tts_info, user_input, self.config_entry.options
-        )
+        return [none_option] + [
+            SelectOptionDict(label=api_id, value=api_id) for api_id in api_ids
+        ]
 
-    def _build_voice_options(
+    def _validate_numeric_options(
         self,
-        selected_model: str,
-        tts_info: dict[str, _TTSModelInfo],
-    ) -> list[SelectOptionDict]:
-        """Return SelectOptionDict voices for the selected TTS model."""
-        return _build_voice_options(selected_model, tts_info)
+        user_input: dict[str, Any],
+    ) -> dict[str, str]:
+        """Validate numeric option ranges and return per-field error keys."""
+        errors: dict[str, str] = {}
+        max_tokens = user_input.get(CONF_MAX_TOKENS)
+        if isinstance(max_tokens, (int, float)) and not (1 <= max_tokens <= 32768):
+            errors[CONF_MAX_TOKENS] = "max_tokens_out_of_range"
+        top_p = user_input.get(CONF_TOP_P)
+        if isinstance(top_p, (int, float)) and not (0.0 <= top_p <= 1.0):
+            errors[CONF_TOP_P] = "top_p_out_of_range"
+        temperature = user_input.get(CONF_TEMPERATURE)
+        if isinstance(temperature, (int, float)) and not (0.0 <= temperature <= 2.0):
+            errors[CONF_TEMPERATURE] = "temperature_out_of_range"
+        max_tool_iter = user_input.get(CONF_MAX_TOOL_ITERATIONS)
+        if isinstance(max_tool_iter, (int, float)) and not (1 <= max_tool_iter <= 20):
+            errors[CONF_MAX_TOOL_ITERATIONS] = "max_tool_iterations_out_of_range"
+        tts_speed = user_input.get(CONF_TTS_SPEED)
+        if isinstance(tts_speed, (int, float)) and not (0.25 <= tts_speed <= 4.0):
+            errors[CONF_TTS_SPEED] = "tts_speed_out_of_range"
+        timeout = user_input.get(CONF_REQUEST_TIMEOUT)
+        if isinstance(timeout, (int, float)) and not (10.0 <= timeout <= 300.0):
+            errors[CONF_REQUEST_TIMEOUT] = "request_timeout_out_of_range"
+        prompt = user_input.get(CONF_PROMPT)
+        if prompt is not None and not isinstance(prompt, str):
+            errors[CONF_PROMPT] = "prompt_must_be_string"
+        return errors
 
     def _build_options_schema(
         self,
         chat_options: list[SelectOptionDict],
-        tts_info: dict[str, _TTSModelInfo],
+        combined_tts_options: list[SelectOptionDict],
         stt_options: list[SelectOptionDict],
-        selected_tts_model: str,
         llm_api_options: list[SelectOptionDict] | None = None,
     ) -> vol.Schema:
-        """Build the full options schema including TTS model and filtered voice list.
+        """Build the full options schema.
 
-        The voice dropdown is built from the voices available for
-        ``selected_tts_model``, so it always shows only valid choices.
-        When the user picks a different model and submits, ``async_step_init``
-        re-renders this schema with the new model's voices pre-populated.
-
-        Suggested values are supplied by the caller via
-        ``add_suggested_values_to_schema``.
+        TTS model and voice are presented as a single combined searchable
+        dropdown (``tts_model_voice``).  The user types a model name to
+        filter, then picks a 'model → voice' entry.  Both are stored
+        atomically on submit — no re-render handshake required.
         """
-        tts_model_options = [
-            SelectOptionDict(label=model_id, value=model_id)
-            for model_id in sorted(tts_info)
-        ] or [SelectOptionDict(label=RECOMMENDED_TTS_MODEL, value=RECOMMENDED_TTS_MODEL)]
-
-        voice_options = _build_voice_options(selected_tts_model, tts_info)
-
         if llm_api_options is None:
             llm_api_options = [SelectOptionDict(label="None (disabled)", value="")]
 
@@ -515,18 +566,12 @@ class VeniceAIOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_MAX_TOOL_ITERATIONS): NumberSelector(
                     NumberSelectorConfig(min=1, max=20, step=1, mode="slider")
                 ),
-                # TTS — model and voice on the same form.
-                # Voice options are filtered to the selected model; changing
-                # the model and submitting re-renders the form with updated voices.
-                vol.Optional(CONF_TTS_MODEL): SelectSelector(
+                # Single combined TTS model + voice selector.
+                # Entries look like "kokoro → af_heart".  The dropdown is
+                # searchable — type a model name to filter to its voices.
+                vol.Optional(_CONF_TTS_MODEL_VOICE): SelectSelector(
                     SelectSelectorConfig(
-                        options=tts_model_options,
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(CONF_TTS_VOICE): SelectSelector(
-                    SelectSelectorConfig(
-                        options=voice_options,
+                        options=combined_tts_options,
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -569,90 +614,26 @@ class VeniceAIOptionsFlow(OptionsFlow):
             }
         )
 
-    async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
-        """Return a list of available HA LLM API IDs as SelectOptionDicts."""
-        none_option = SelectOptionDict(label="None (disabled)", value="")
-        api_ids: list[str] = []
-        try:
-            if hasattr(llm, "async_get_api_list"):
-                api_ids = await llm.async_get_api_list(self.hass)
-            else:
-                try:
-                    await llm.async_get_api(self.hass, "assist")
-                    api_ids = ["assist"]
-                except Exception:
-                    pass
-        except Exception:
-            _LOGGER.debug("Could not fetch LLM API list; using fallback")
-            api_ids = ["assist"]
-
-        return [none_option] + [
-            SelectOptionDict(label=api_id, value=api_id) for api_id in api_ids
-        ]
-
-    def _validate_numeric_options(
-        self,
-        user_input: dict[str, Any],
-    ) -> dict[str, str]:
-        """ARCH-4: validate numeric option ranges and return per-field error keys."""
-        errors: dict[str, str] = {}
-        max_tokens = user_input.get(CONF_MAX_TOKENS)
-        if isinstance(max_tokens, (int, float)) and not (1 <= max_tokens <= 32768):
-            errors[CONF_MAX_TOKENS] = "max_tokens_out_of_range"
-        top_p = user_input.get(CONF_TOP_P)
-        if isinstance(top_p, (int, float)) and not (0.0 <= top_p <= 1.0):
-            errors[CONF_TOP_P] = "top_p_out_of_range"
-        temperature = user_input.get(CONF_TEMPERATURE)
-        if isinstance(temperature, (int, float)) and not (0.0 <= temperature <= 2.0):
-            errors[CONF_TEMPERATURE] = "temperature_out_of_range"
-        max_tool_iter = user_input.get(CONF_MAX_TOOL_ITERATIONS)
-        if isinstance(max_tool_iter, (int, float)) and not (1 <= max_tool_iter <= 20):
-            errors[CONF_MAX_TOOL_ITERATIONS] = "max_tool_iterations_out_of_range"
-        tts_speed = user_input.get(CONF_TTS_SPEED)
-        if isinstance(tts_speed, (int, float)) and not (0.25 <= tts_speed <= 4.0):
-            errors[CONF_TTS_SPEED] = "tts_speed_out_of_range"
-        timeout = user_input.get(CONF_REQUEST_TIMEOUT)
-        if isinstance(timeout, (int, float)) and not (10.0 <= timeout <= 300.0):
-            errors[CONF_REQUEST_TIMEOUT] = "request_timeout_out_of_range"
-        prompt = user_input.get(CONF_PROMPT)
-        if prompt is not None and not isinstance(prompt, str):
-            errors[CONF_PROMPT] = "prompt_must_be_string"
-        return errors
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Single-step options form: all settings including TTS model and voice.
+        """Single-step options form: all settings including TTS voice selection.
 
-        All model/voice data is fetched once when the form opens (and cached
-        for any re-renders so no extra API calls are made).
-
-        On submission the flow checks whether the submitted voice is valid for
-        the submitted TTS model:
-
-        * If the **TTS model changed** since the last render and the submitted
-          voice is no longer valid, the form re-renders with the voice dropdown
-          re-populated with only voices for the new model and the model's
-          default voice pre-selected.  The user sees the updated list
-          immediately and submits again — no second page required.
-
-        * If the voice is valid for the selected model (model unchanged, or
-          user already picked a valid voice for the new model) the options are
-          saved immediately.
+        TTS model and voice are presented as one combined searchable dropdown
+        (``tts_model_voice``).  Entries are formatted as ``"<model> → <voice>"``.
+        The user types a model name to filter to its voices, picks one entry,
+        and both model and voice are set simultaneously on submit — no
+        re-render, no second page, no abandonment risk.
         """
         errors: dict[str, str] = {}
 
-        # Always fetch live from the Venice AI API so newly added models and
-        # voices are immediately visible when the user opens the options form.
+        # Always fetch live so newly added models/voices are immediately visible.
         chat_options, tts_info, stt_options, fetch_errors = await self._fetch_model_metadata()
         llm_api_options = await self._fetch_llm_api_options()
-        self._tts_info = tts_info
+        combined_tts_options = _build_combined_tts_options(tts_info)
 
         if fetch_errors:
             errors.update(fetch_errors)
-
-        # The TTS model that drives the voice dropdown for this render.
-        selected_tts_model = self._resolve_tts_model(user_input, tts_info)
 
         if user_input is not None and not errors:
             # --- Normalise LLM API field ---
@@ -673,59 +654,48 @@ class VeniceAIOptionsFlow(OptionsFlow):
             errors.update(self._validate_numeric_options(user_input))
 
             if not errors:
-                submitted_voice = user_input.get(CONF_TTS_VOICE)
-                model_info = tts_info.get(selected_tts_model)
-                voice_valid = (
-                    model_info is not None
-                    and isinstance(submitted_voice, str)
-                    and submitted_voice in model_info.voices
-                )
-                model_changed = (
-                    self._shown_tts_model is not None
-                    and self._shown_tts_model != selected_tts_model
+                # Parse the combined 'model → voice' selector value.
+                combined_value = user_input.get(_CONF_TTS_MODEL_VOICE)
+                parsed = (
+                    _parse_combined_tts_value(combined_value)
+                    if isinstance(combined_value, str)
+                    else None
                 )
 
-                if not voice_valid and model_changed:
-                    # The user switched the TTS model; the voice they had
-                    # selected is not valid for the new model.  Re-render
-                    # the same form with the new model's voices and default
-                    # voice pre-selected.  The user submits once more to save.
-                    _LOGGER.debug(
-                        "TTS model changed to '%s'; re-rendering with updated voices",
-                        selected_tts_model,
+                if parsed is None:
+                    errors[_CONF_TTS_MODEL_VOICE] = "invalid_tts_voice_for_model"
+                    _LOGGER.warning(
+                        "Could not parse combined TTS value '%s'", combined_value
                     )
-                    # Fall through to re-render below (user_input is retained
-                    # for all other fields via suggested_values).
-                elif not voice_valid:
-                    # Model didn't change but the voice somehow isn't in the
-                    # list (e.g. stale value).  Treat as a field error.
-                    errors[CONF_TTS_VOICE] = "invalid_tts_voice_for_model"
                 else:
-                    # Voice is valid → save immediately.
-                    final_options = dict(user_input)
-                    final_options[CONF_TTS_MODEL] = selected_tts_model
-                    final_options[CONF_TTS_VOICE] = submitted_voice
+                    tts_model, tts_voice = parsed
+                    # Build the final options dict: remove the form-only combined
+                    # key and replace with the two separate stored keys.
+                    final_options = {
+                        k: v
+                        for k, v in user_input.items()
+                        if k != _CONF_TTS_MODEL_VOICE
+                    }
+                    final_options[CONF_TTS_MODEL] = tts_model
+                    final_options[CONF_TTS_VOICE] = tts_voice
                     _LOGGER.debug(
                         "Options saved: TTS model='%s', voice='%s'",
-                        selected_tts_model,
-                        submitted_voice,
+                        tts_model,
+                        tts_voice,
                     )
                     return self.async_create_entry(title="", data=final_options)
 
-        # --- Build the schema for this render ---
-        # Record which model is shown so the next submission can detect changes.
-        self._shown_tts_model = selected_tts_model
-
+        # --- Build schema and suggested values for this render ---
         options_schema = self._build_options_schema(
             chat_options,
-            tts_info,
+            combined_tts_options,
             stt_options,
-            selected_tts_model,
             llm_api_options,
         )
 
-        # Suggested values: defaults → saved options → current submission.
-        # The voice is resolved to the best choice for the current model.
+        # Layer: defaults → saved options → current submission.
+        # The combined TTS field is always resolved last so it accurately
+        # reflects either the user's current selection or the saved state.
         suggested_values: dict[str, Any] = {
             CONF_PROMPT: DEFAULT_SYSTEM_PROMPT,
             CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
@@ -737,7 +707,6 @@ class VeniceAIOptionsFlow(OptionsFlow):
             CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
             CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
             CONF_MAX_TOOL_ITERATIONS: RECOMMENDED_MAX_TOOL_ITERATIONS,
-            CONF_TTS_MODEL: selected_tts_model,
             CONF_TTS_RESPONSE_FORMAT: RECOMMENDED_TTS_RESPONSE_FORMAT,
             CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED,
             CONF_STT_MODEL: RECOMMENDED_STT_MODEL,
@@ -745,14 +714,18 @@ class VeniceAIOptionsFlow(OptionsFlow):
             CONF_STT_TIMESTAMPS: RECOMMENDED_STT_TIMESTAMPS,
             CONF_REQUEST_TIMEOUT: RECOMMENDED_REQUEST_TIMEOUT,
         }
+        # Saved options may contain CONF_TTS_MODEL / CONF_TTS_VOICE separately —
+        # those keys are not in the schema and are harmlessly ignored by
+        # add_suggested_values_to_schema, but they are used by
+        # _resolve_combined_tts_value below.
         suggested_values.update(self.config_entry.options)
         if user_input is not None:
             suggested_values.update(user_input)
 
-        # Always pin the resolved model and a valid voice for it.
-        suggested_values[CONF_TTS_MODEL] = selected_tts_model
-        suggested_values[CONF_TTS_VOICE] = _resolve_tts_voice(
-            selected_tts_model, tts_info, user_input, self.config_entry.options
+        # Always resolve the combined TTS field last so it reflects the correct
+        # pre-selection regardless of what was merged above.
+        suggested_values[_CONF_TTS_MODEL_VOICE] = _resolve_combined_tts_value(
+            tts_info, user_input, self.config_entry.options
         )
 
         return self.async_show_form(

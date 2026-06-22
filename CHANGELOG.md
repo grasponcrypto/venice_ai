@@ -35,6 +35,19 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 ### Fixed
 - **MED-3:** Conversation streaming flag (`CONF_STREAM_RESPONSE`)
   honoured by the conversation entity; opt-in default off.
+- **SEC-1 (regression):** `_sanitize_header_value` in `client.py`
+  previously called `.strip()` and filtered every character with
+  `ord(ch) >= 0x20` on the API key. That combination silently mutated
+  previously-valid keys (e.g. by trimming surrounding whitespace or
+  NBSP introduced during copy-paste) into byte-different strings, which
+  Venice rejected with HTTP 401 on every request — observed as
+  `Venice AI HTTP error 401:` in `client.py` and
+  `Invalid API key (streaming chat)` in `conversation.py`. The helper
+  now removes only `\r` and `\n` (the actual header-injection vectors)
+  and the client stores the unmodified `api_key` on `self._api_key`,
+  applying the scrub at header-construction time only. Users who
+  re-entered their key during the affected window do not need to do so
+  again. Reported against commit `64b115c`.
 
 ## [0.9.0] — Initial public release
 

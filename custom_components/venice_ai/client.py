@@ -44,16 +44,29 @@ except ImportError:  # pragma: no cover
 
 
 def _sanitize_header_value(value: str | None) -> str:
-    """SEC-1: scrub CR/LF/control bytes from header values before they go on the wire.
+    """SEC-1: strip CR/LF from a header value before it goes on the wire.
 
-    httpx will raise on raw CR/LF but a malicious value crafted with other
-    control characters can still confuse downstream logging or proxy layers.
-    Strip everything below 0x20 (space) before exposing the API key in any
-    Authorization header.
+    Only the carriage-return and line-feed bytes are removed. We deliberately
+    do NOT:
+
+      * call ``.strip()`` — that would silently mutate a credential by
+        trimming leading/trailing whitespace (or NBSP/other Python-defined
+        whitespace), producing a byte-different key that authenticates
+        against Venice as "invalid" (regression seen in commit 64b115c,
+        which caused HTTP 401 on previously-valid keys).
+      * filter every char below 0x20 — Venice API keys are alphanumeric
+        today, but filtering by ord >= 0x20 plus a trailing .strip() was
+        the exact combination that broke valid keys. Header injection is
+        fully prevented by removing just ``\\r`` and ``\\n``; httpx itself
+        rejects any remaining control bytes on the wire.
+
+    The original, unmodified ``api_key`` is stored on ``self._api_key``;
+    this function is only applied at header-construction time so the
+    Authorization value is the credential byte-for-byte minus CR/LF.
     """
     if not value:
         return ""
-    return "".join(ch for ch in value if ord(ch) >= 0x20).strip()
+    return value.replace("\r", "").replace("\n", "")
 
 
 # PERF-1: process-wide cache of model lists. Multiple client instances (e.g.
@@ -622,9 +635,12 @@ class AsyncVeniceAIClient:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the client."""
-        # SEC-1: scrub the API key before it is used to build any header value.
-        safe_api_key = _sanitize_header_value(api_key)
-        self._api_key = safe_api_key
+        # SEC-1: store the credential unmodified so any diagnostics or
+        # re-auth round-trip sees the user-provided value. The CR/LF-only
+        # scrub is applied at header-construction time below. (Previous
+        # code mutated the key via .strip(), which turned valid keys
+        # into 401-rejected keys — regression in commit 64b115c.)
+        self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         # QUAL-2 / PERF-4: pool sizing and default timeout sourced from constants
         # so a single edit in const.py changes the whole client.
@@ -643,7 +659,7 @@ class AsyncVeniceAIClient:
         self.metrics = VeniceAIMetrics()
 
         self._headers = {
-            "Authorization": f"Bearer {safe_api_key}",
+            "Authorization": f"Bearer {_sanitize_header_value(api_key)}",
             "Content-Type": "application/json",
             "Accept-Encoding": "gzip, br",
         }
