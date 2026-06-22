@@ -207,7 +207,15 @@ class VeniceAIOptionsFlow(OptionsFlow):
 
                 # Fetch audio models for TTS and STT
                 LOGGER.debug("Fetching audio models for TTS/STT options flow")
-                audio_models_response = await self._client.models.list(model_type="audio")
+                # Venice retired the "audio" model type; it is now split into "tts" and "asr".
+                audio_models_response = []
+                for _audio_type in ("tts", "asr"):
+                    try:
+                        _resp = await self._client.models.list(model_type=_audio_type)
+                        if isinstance(_resp, list):
+                            audio_models_response.extend(_resp)
+                    except VeniceAIError as err:
+                        LOGGER.warning("Failed to fetch %s models: %s", _audio_type, err)
 
                 if audio_models_response and isinstance(audio_models_response, list):
                     fetched_tts_models = []
