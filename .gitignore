@@ -180,11 +180,3 @@ tasks/
 scripts/
 local_documents/
 .cline/
-*.txt
-!requirements.txt
-apply_changes.py
-fix_all.py
-fix_log.txt
-test_*.py
-!tests/test_*.py
-REPLACE
