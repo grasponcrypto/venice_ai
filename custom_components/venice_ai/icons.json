@@ -1,7 +1,10 @@
 {
     "services": {
         "generate_image": {
-        "service": "mdi:image-sync"
+            "service": "mdi:image-sync"
+        },
+        "ai_task": {
+            "service": "mdi:brain"
         }
     }
 }
