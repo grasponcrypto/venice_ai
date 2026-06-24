@@ -10,9 +10,9 @@ from collections import OrderedDict
 from typing import Any
 
 from homeassistant.components.conversation import (
-    HOME_ASSISTANT_AGENT,
     MATCH_ALL,
     ConversationEntity,
+    ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
     ChatLog,
@@ -23,7 +23,7 @@ from homeassistant.components.conversation import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import intent, llm, device_registry as dr, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -281,6 +281,11 @@ class VeniceAIConversationEntity(ConversationEntity):
         self._service = VeniceConversationService(self._client)
         self._attr_unique_id = f"{entry.entry_id}_conversation"
         self._attr_name = entry.title
+        # Advertise CONTROL when a Home Assistant LLM API is configured, so the
+        # frontend stops showing "this assistant cannot control your home" and
+        # the assist pipeline treats this agent as control-capable.
+        if entry.options.get(CONF_LLM_HASS_API):
+            self._attr_supported_features = ConversationEntityFeature.CONTROL
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -460,14 +465,13 @@ class VeniceAIConversationEntity(ConversationEntity):
         tools: list[llm.Tool] = []
         if llm_api:
             try:
-                llm_context = llm.LLMContext(
-                    platform=DOMAIN,
-                    context=user_input.context,
-                    user_prompt=user_input.text,
-                    language=user_input.language,
-                    assistant=HOME_ASSISTANT_AGENT,
-                    device_id=user_input.device_id,
-                )
+                # Build the context via the canonical helper so the `assistant`
+                # key matches HA's exposure model (conversation.DOMAIN). Setting
+                # it to HOME_ASSISTANT_AGENT made async_should_expose look under
+                # the wrong key, so every exposed entity was reported as not
+                # exposed (MatchFailedReason.ASSISTANT) and control silently
+                # found nothing.
+                llm_context = user_input.as_llm_context(DOMAIN)
                 api = await llm.async_get_api(self.hass, llm_api, llm_context)
                 tools = list(api.tools)
             except Exception as err:
@@ -504,7 +508,7 @@ class VeniceAIConversationEntity(ConversationEntity):
 
         try:
             _trim_chat_log(chat_log)
-            for iteration in range(max_tool_iterations):
+            for iteration in range(int(max_tool_iterations)):
                 messages = _convert_chat_log_to_venice_messages(
                     chat_log, system_prompt, strip_thinking=strip_thinking
                 )
@@ -644,13 +648,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                                 tool_input = llm.ToolInput(
                                     tool_name=tool_name,
                                     tool_args=tool_args,
-                                    platform=DOMAIN,
-                                    context=user_input.context,
-                                    user_prompt=user_input.text,
-                                    assistant=HOME_ASSISTANT_AGENT,
-                                    device_id=user_input.device_id,
                                 )
-                                tool_result = await tool.async_call(self.hass, tool_input)
+                                tool_result = await tool.async_call(
+                                    self.hass, tool_input, llm_context
+                                )
                             except Exception as tool_err:
                                 _LOGGER.warning("Tool %s failed: %s", tool_name, tool_err)
                                 tool_result = {"error": str(tool_err)}
@@ -661,7 +662,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                         tool_result = {"error": f"Tool {tool_name} not found"}
 
                     tool_result_content = ToolResultContent(
+                        agent_id=DOMAIN,
                         tool_call_id=call_id,
+                        tool_name=tool_name,
                         tool_result=tool_result,
                     )
                     chat_log.content.append(tool_result_content)
@@ -739,10 +742,14 @@ class VeniceAIConversationEntity(ConversationEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Register update listener and start the HIGH-2 cleanup loop."""
-        self.entry.async_on_unload(
-            self.entry.add_update_listener(self._async_entry_updated)
-        )
+        """Start the HIGH-2 cleanup loop.
+
+        No options-update listener is registered here: the options flow
+        subclasses OptionsFlowWithReload, which reloads the config entry (and
+        therefore recreates this entity) whenever options are saved. Adding a
+        manual update listener on top of that raises ValueError on save in
+        modern HA cores.
+        """
         # HIGH-2: start the periodic cleanup task. Cancelled on unload.
         if self._cleanup_task is None or self._cleanup_task.done():
             self._cleanup_task = self.hass.async_create_background_task(
@@ -753,12 +760,6 @@ class VeniceAIConversationEntity(ConversationEntity):
     async def async_will_remove_from_hass(self) -> None:
         """HIGH-2: stop the cleanup task when the entity is being removed."""
         self._cancel_cleanup()
-
-    @callback
-    def _async_entry_updated(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        """Handle options update."""
-        self.entry = entry
-        self._client = entry.runtime_data.client
 
 
 async def async_setup_entry(

@@ -481,25 +481,30 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         return chat_options, tts_info, stt_options, errors
 
     async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
-        """Return a list of available HA LLM API IDs as SelectOptionDicts."""
-        none_option = SelectOptionDict(label="None (disabled)", value="")
-        api_ids: list[str] = []
+        """Return the registered HA LLM APIs as SelectOptionDicts.
+
+        Uses ``llm.async_get_apis`` (HA 2025+), which is a synchronous callback
+        returning ``API`` objects with ``id`` and ``name`` attributes. The
+        legacy ``async_get_api_list`` helper (which returned id strings) was
+        removed, so the old code path always fell through to an empty list and
+        the control selector showed only "None".
+        """
         try:
+            if hasattr(llm, "async_get_apis"):
+                return [
+                    SelectOptionDict(label=api.name, value=api.id)
+                    for api in llm.async_get_apis(self.hass)
+                ]
+            # Legacy fallback for very old cores that still expose the list helper.
             if hasattr(llm, "async_get_api_list"):
                 api_ids = await llm.async_get_api_list(self.hass)
-            else:
-                try:
-                    await llm.async_get_api(self.hass, "assist")
-                    api_ids = ["assist"]
-                except Exception:
-                    pass
-        except Exception:
-            _LOGGER.debug("Could not fetch LLM API list; using fallback")
-            api_ids = ["assist"]
-
-        return [none_option] + [
-            SelectOptionDict(label=api_id, value=api_id) for api_id in api_ids
-        ]
+                return [
+                    SelectOptionDict(label=api_id, value=api_id)
+                    for api_id in api_ids
+                ]
+        except Exception:  # pragma: no cover - defensive
+            _LOGGER.debug("Could not fetch LLM API list", exc_info=True)
+        return []
 
     def _validate_numeric_options(
         self,
@@ -545,7 +550,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         atomically on submit — no re-render handshake required.
         """
         if llm_api_options is None:
-            llm_api_options = [SelectOptionDict(label="None (disabled)", value="")]
+            llm_api_options = []
 
         return vol.Schema(
             {
@@ -569,7 +574,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     SelectSelectorConfig(
                         options=llm_api_options,
                         mode=SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
+                        multiple=True,
                     )
                 ),
                 vol.Optional(CONF_STRIP_THINKING_RESPONSE): BooleanSelector(),
@@ -652,14 +657,13 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
                 user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
             elif CONF_LLM_HASS_API in user_input and user_input[CONF_LLM_HASS_API]:
-                try:
-                    await llm.async_get_api(self.hass, user_input[CONF_LLM_HASS_API])
-                except Exception as err:
-                    _LOGGER.warning(
-                        "Invalid LLM API ID '%s': %s",
-                        user_input[CONF_LLM_HASS_API],
-                        err,
-                    )
+                selected = user_input[CONF_LLM_HASS_API]
+                if isinstance(selected, str):
+                    selected = [selected]
+                available = {api.id for api in llm.async_get_apis(self.hass)}
+                invalid = [api_id for api_id in selected if api_id not in available]
+                if invalid:
+                    _LOGGER.warning("Invalid LLM API ID(s): %s", invalid)
                     errors[CONF_LLM_HASS_API] = "invalid_llm_api"
 
             # --- Validate numeric ranges ---
@@ -714,7 +718,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
             CONF_TOP_P: RECOMMENDED_TOP_P,
             CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
-            CONF_LLM_HASS_API: "",
+            CONF_LLM_HASS_API: [],
             CONF_STRIP_THINKING_RESPONSE: RECOMMENDED_STRIP_THINKING_RESPONSE,
             CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
             CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
