@@ -460,14 +460,28 @@ class VeniceAIConversationEntity(ConversationEntity):
         tools: list[llm.Tool] = []
         if llm_api:
             try:
-                llm_context = llm.LLMContext(
-                    platform=DOMAIN,
-                    context=user_input.context,
-                    user_prompt=user_input.text,
-                    language=user_input.language,
-                    assistant=HOME_ASSISTANT_AGENT,
-                    device_id=user_input.device_id,
-                )
+                # LLMContext signature changed across HA versions:
+                # - HA < 2024.7: accepts user_prompt, language, assistant, device_id
+                # - HA ≥ 2024.7: may drop some kwargs or reorder them
+                # Try the full signature first; fall back to a minimal one.
+                try:
+                    llm_context = llm.LLMContext(
+                        platform=DOMAIN,
+                        context=user_input.context,
+                        user_prompt=user_input.text,
+                        language=user_input.language,
+                        assistant=HOME_ASSISTANT_AGENT,
+                        device_id=user_input.device_id,
+                    )
+                except TypeError:
+                    # Newer HA dropped some kwargs — use positional/minimal form
+                    llm_context = llm.LLMContext(
+                        platform=DOMAIN,
+                        context=user_input.context,
+                        language=user_input.language,
+                        assistant=HOME_ASSISTANT_AGENT,
+                        device_id=user_input.device_id,
+                    )
                 api = await llm.async_get_api(self.hass, llm_api, llm_context)
                 tools = list(api.tools)
             except Exception as err:
@@ -500,7 +514,8 @@ class VeniceAIConversationEntity(ConversationEntity):
         assistant_response_content = None
         text_content = ""
 
-        max_tool_iterations = options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
+        # NumberSelector stores values as floats; cast to int so range() works.
+        max_tool_iterations = int(options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS))
 
         try:
             _trim_chat_log(chat_log)
@@ -739,10 +754,15 @@ class VeniceAIConversationEntity(ConversationEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Register update listener and start the HIGH-2 cleanup loop."""
-        self.entry.async_on_unload(
-            self.entry.add_update_listener(self._async_entry_updated)
-        )
+        """Start the HIGH-2 cleanup loop.
+
+        NOTE: No add_update_listener is registered here because VeniceAIOptionsFlow
+        subclasses OptionsFlowWithReload (HA ≥ 2024.1), which automatically reloads
+        the entire integration when options are saved. Registering an update listener
+        alongside OptionsFlowWithReload raises:
+            ValueError: Config entry update listeners should not be used with OptionsFlowWithReload
+        The entity is recreated fresh on every reload, so a manual listener is unnecessary.
+        """
         # HIGH-2: start the periodic cleanup task. Cancelled on unload.
         if self._cleanup_task is None or self._cleanup_task.done():
             self._cleanup_task = self.hass.async_create_background_task(
@@ -753,12 +773,6 @@ class VeniceAIConversationEntity(ConversationEntity):
     async def async_will_remove_from_hass(self) -> None:
         """HIGH-2: stop the cleanup task when the entity is being removed."""
         self._cancel_cleanup()
-
-    @callback
-    def _async_entry_updated(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        """Handle options update."""
-        self.entry = entry
-        self._client = entry.runtime_data.client
 
 
 async def async_setup_entry(

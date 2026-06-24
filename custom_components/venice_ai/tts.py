@@ -149,14 +149,46 @@ class VeniceAITTS(TextToSpeechEntity):
     def async_get_supported_voices(self, language: str) -> list[Voice] | None:
         """Return available Venice voices for Home Assistant voice selection.
 
-        Voices are pulled from the coordinator's cached audio-models data.
-        When the coordinator hasn't finished its first update yet, an empty
-        list is returned so the TTS entity degrades gracefully.
+        Only voices belonging to the currently configured TTS model are
+        returned.  Returning voices from all models at once would flood the
+        pipeline UI with hundreds of entries that don't work with the active
+        model.
+
+        Falls back to all known voices if the configured model cannot be
+        found in the coordinator cache (e.g. during first startup before the
+        coordinator has refreshed).
         """
         coordinator = getattr(self._config_entry.runtime_data, "coordinator", None)
         if coordinator is None or coordinator.data is None:
             return []
 
+        active_model = self._config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+
+        # Find the active model in the coordinator's audio_models list and
+        # extract its voices using the same dual-source logic as coordinator.py.
+        audio_models: list[dict] = coordinator.data.get("audio_models", [])
+        for model in audio_models:
+            if not isinstance(model, dict):
+                continue
+            if model.get("id") != active_model:
+                continue
+            # Primary source: model_spec.voices
+            raw_spec = model.get("model_spec")
+            if isinstance(raw_spec, dict):
+                spec_voices = raw_spec.get("voices")
+                if isinstance(spec_voices, list):
+                    voices = [v for v in spec_voices if isinstance(v, str) and v]
+                    if voices:
+                        return [Voice(v, v) for v in voices]
+            # Fallback: legacy voice_models field
+            legacy = model.get("voice_models", [])
+            if isinstance(legacy, list):
+                voices = [v for v in legacy if isinstance(v, str) and v]
+                if voices:
+                    return [Voice(v, v) for v in voices]
+
+        # Active model not found in cache — fall back to all known voices so
+        # the dropdown is never completely empty.
         voices_data: list[str] = coordinator.data.get("voices", [])
         return [Voice(voice_id, voice_id) for voice_id in voices_data]
 

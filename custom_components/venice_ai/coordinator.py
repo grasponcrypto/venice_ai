@@ -85,13 +85,28 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                     m["model_type"] = "tts"
                 data["audio_models"].extend(tts_models)
                 _LOGGER.debug("Coordinator fetched %d TTS models", len(tts_models))
-                # Extract voices from TTS model metadata (voice_models field per model)
+                # Extract voices from TTS model metadata.
+                # Venice AI returns voices under model_spec.voices (current API shape).
+                # Older/fallback responses may use the legacy voice_models field.
                 for model in tts_models:
-                    voice_models = model.get("voice_models", [])
-                    if isinstance(voice_models, list):
-                        for vid in voice_models:
-                            if isinstance(vid, str) and vid not in data["voices"]:
-                                data["voices"].append(vid)
+                    voices_found: list[str] = []
+
+                    # Primary source: model_spec.voices
+                    raw_spec = model.get("model_spec")
+                    if isinstance(raw_spec, dict):
+                        spec_voices = raw_spec.get("voices")
+                        if isinstance(spec_voices, list):
+                            voices_found = [v for v in spec_voices if isinstance(v, str) and v]
+
+                    # Fallback: legacy voice_models field
+                    if not voices_found:
+                        voice_models = model.get("voice_models", [])
+                        if isinstance(voice_models, list):
+                            voices_found = [v for v in voice_models if isinstance(v, str) and v]
+
+                    for vid in voices_found:
+                        if vid not in data["voices"]:
+                            data["voices"].append(vid)
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching TTS models: %s", err)
             raise UpdateFailed(f"Authentication failed: {err}") from err

@@ -515,10 +515,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     return True
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None:
-    """Reload Venice AI when options change."""
-    _LOGGER.info("Reloading Venice AI entry %s due to options update", entry.entry_id)
-    await hass.config_entries.async_reload(entry.entry_id)
+# NOTE: async_reload_entry is intentionally NOT defined.
+# VeniceAIOptionsFlow subclasses OptionsFlowWithReload (HA ≥ 2024.1) which
+# automatically triggers an integration reload when the user saves options.
+# Defining async_reload_entry would register it as an update listener,
+# which conflicts with OptionsFlowWithReload and raises:
+#   ValueError: Config entry update listeners should not be used with OptionsFlowWithReload
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:

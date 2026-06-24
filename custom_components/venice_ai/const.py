@@ -16,7 +16,7 @@ except ImportError:
 
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
-RECOMMENDED_CHAT_MODEL = "qwen-3-7-plus"  # Venice AI default model with function calling support
+RECOMMENDED_CHAT_MODEL = "e2ee-gemma-4-31b"  # Venice AI default model with function calling support
 CONF_MAX_TOKENS = "max_tokens"
 RECOMMENDED_MAX_TOKENS = 512
 CONF_TOP_P = "top_p"

@@ -481,25 +481,99 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         return chat_options, tts_info, stt_options, errors
 
     async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
-        """Return a list of available HA LLM API IDs as SelectOptionDicts."""
-        none_option = SelectOptionDict(label="None (disabled)", value="")
-        api_ids: list[str] = []
-        try:
-            if hasattr(llm, "async_get_api_list"):
-                api_ids = await llm.async_get_api_list(self.hass)
-            else:
-                try:
-                    await llm.async_get_api(self.hass, "assist")
-                    api_ids = ["assist"]
-                except Exception:
-                    pass
-        except Exception:
-            _LOGGER.debug("Could not fetch LLM API list; using fallback")
-            api_ids = ["assist"]
+        """Return a list of available HA LLM API IDs as SelectOptionDicts.
 
-        return [none_option] + [
-            SelectOptionDict(label=api_id, value=api_id) for api_id in api_ids
-        ]
+        Tries three discovery methods in order, falling through to the next
+        method only if the previous found zero APIs. This ensures that if
+        ``async_get_apis`` exists but returns an empty iterable (e.g. on some
+        HA versions) we still fall back to probing known API IDs directly.
+        """
+        none_option = SelectOptionDict(label="None (disabled)", value="")
+        api_options: list[SelectOptionDict] = [none_option]
+
+        # Method 1: async_get_apis (HA ≥ 2024.x – returns API objects with .id/.name)
+        if hasattr(llm, "async_get_apis"):
+            try:
+                apis = list(llm.async_get_apis(self.hass))
+                for api in apis:
+                    api_options.append(
+                        SelectOptionDict(label=getattr(api, "name", api.id), value=api.id)
+                    )
+                _LOGGER.debug("Found %d LLM API(s) via async_get_apis", len(apis))
+                # Only return if we actually discovered something; otherwise fall through.
+                if len(api_options) > 1:
+                    return api_options
+            except Exception as err:
+                _LOGGER.debug("async_get_apis failed: %s", err)
+
+        # Method 2: async_get_api_list (returns list of API ID strings)
+        if hasattr(llm, "async_get_api_list"):
+            try:
+                api_ids = await llm.async_get_api_list(self.hass)
+                if isinstance(api_ids, list):
+                    for api_id in api_ids:
+                        if isinstance(api_id, str):
+                            # Avoid duplicates from Method 1
+                            existing_values = {o["value"] for o in api_options}
+                            if api_id not in existing_values:
+                                api_options.append(
+                                    SelectOptionDict(label=api_id.capitalize(), value=api_id)
+                                )
+                    _LOGGER.debug(
+                        "Found %d LLM API(s) via async_get_api_list", len(api_ids)
+                    )
+                    if len(api_options) > 1:
+                        return api_options
+            except Exception as err:
+                _LOGGER.debug("async_get_api_list failed: %s", err)
+
+        # Method 3: Probe well-known API IDs directly.
+        # This is the reliable fallback: ``llm.async_get_api`` raises if the
+        # API doesn't exist, so any ID that doesn't raise is genuinely available.
+        known_apis = [("assist", "Assist"), ("homeassistant", "Home Assistant")]
+        existing_values = {o["value"] for o in api_options}
+        for api_id, label in known_apis:
+            if api_id in existing_values:
+                continue
+            try:
+                # LLMContext signature varies across HA versions.
+                # Try the full signature first; if it raises TypeError (e.g.
+                # newer HA dropped user_prompt) fall back to the minimal form.
+                try:
+                    ctx = llm.LLMContext(
+                        platform=DOMAIN,
+                        context=None,
+                        user_prompt=None,
+                        language=None,
+                        assistant=None,
+                        device_id=None,
+                    )
+                except TypeError:
+                    ctx = llm.LLMContext(
+                        platform=DOMAIN,
+                        context=None,
+                        language=None,
+                        assistant=None,
+                        device_id=None,
+                    )
+                await llm.async_get_api(self.hass, api_id, ctx)
+                api_options.append(SelectOptionDict(label=label, value=api_id))
+                _LOGGER.debug("Found LLM API '%s' via direct probe", api_id)
+            except Exception:
+                # API not available on this HA instance — skip silently.
+                pass
+
+        if len(api_options) == 1:
+            # Nothing discovered at all; add "assist" as a best-effort fallback
+            # so the user is never left with only "None".  The conversation
+            # entity will log a warning if the API turns out not to exist at
+            # runtime.
+            _LOGGER.debug(
+                "No LLM APIs discovered; adding 'assist' as best-effort fallback"
+            )
+            api_options.append(SelectOptionDict(label="Assist", value="assist"))
+
+        return api_options
 
     def _validate_numeric_options(
         self,
@@ -565,11 +639,14 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 vol.Optional(CONF_TEMPERATURE): NumberSelector(
                     NumberSelectorConfig(min=0.0, max=2.0, step=0.05, mode="slider")
                 ),
-                vol.Optional(CONF_LLM_HASS_API): SelectSelector(
+                vol.Optional(
+                    CONF_LLM_HASS_API,
+                    default="assist",  # Default to "assist" for HA control
+                ): SelectSelector(
                     SelectSelectorConfig(
                         options=llm_api_options,
                         mode=SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
+                        sort=False,  # Keep "None" first
                     )
                 ),
                 vol.Optional(CONF_STRIP_THINKING_RESPONSE): BooleanSelector(),
@@ -648,54 +725,58 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             errors.update(fetch_errors)
 
         if user_input is not None and not errors:
-            # --- Normalise LLM API field ---
-            if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
-                user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
-            elif CONF_LLM_HASS_API in user_input and user_input[CONF_LLM_HASS_API]:
-                try:
-                    await llm.async_get_api(self.hass, user_input[CONF_LLM_HASS_API])
-                except Exception as err:
-                    _LOGGER.warning(
-                        "Invalid LLM API ID '%s': %s",
-                        user_input[CONF_LLM_HASS_API],
-                        err,
+            try:
+                # --- Normalise LLM API field ---
+                # If empty string (None selected), remove the key entirely
+                if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
+                    user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
+                # Note: We trust the dropdown selection since we validated available
+                # APIs when building the options list. No need to re-validate here.
+
+                # --- Validate numeric ranges ---
+                errors.update(self._validate_numeric_options(user_input))
+
+                if not errors:
+                    # Parse the combined 'model → voice' selector value.
+                    # TTS is optional - if not provided, use defaults.
+                    combined_value = user_input.get(_CONF_TTS_MODEL_VOICE)
+                    parsed = (
+                        _parse_combined_tts_value(combined_value)
+                        if isinstance(combined_value, str) and combined_value
+                        else None
                     )
-                    errors[CONF_LLM_HASS_API] = "invalid_llm_api"
 
-            # --- Validate numeric ranges ---
-            errors.update(self._validate_numeric_options(user_input))
-
-            if not errors:
-                # Parse the combined 'model → voice' selector value.
-                combined_value = user_input.get(_CONF_TTS_MODEL_VOICE)
-                parsed = (
-                    _parse_combined_tts_value(combined_value)
-                    if isinstance(combined_value, str)
-                    else None
-                )
-
-                if parsed is None:
-                    errors[_CONF_TTS_MODEL_VOICE] = "invalid_tts_voice_for_model"
-                    _LOGGER.warning(
-                        "Could not parse combined TTS value '%s'", combined_value
-                    )
-                else:
-                    tts_model, tts_voice = parsed
-                    # Build the final options dict: remove the form-only combined
-                    # key and replace with the two separate stored keys.
+                    # Build the final options dict: remove the form-only combined key
                     final_options = {
                         k: v
                         for k, v in user_input.items()
                         if k != _CONF_TTS_MODEL_VOICE
                     }
-                    final_options[CONF_TTS_MODEL] = tts_model
-                    final_options[CONF_TTS_VOICE] = tts_voice
-                    _LOGGER.debug(
-                        "Options saved: TTS model='%s', voice='%s'",
-                        tts_model,
-                        tts_voice,
-                    )
+
+                    if parsed is not None:
+                        tts_model, tts_voice = parsed
+                        final_options[CONF_TTS_MODEL] = tts_model
+                        final_options[CONF_TTS_VOICE] = tts_voice
+                        _LOGGER.debug(
+                            "Options saved: TTS model='%s', voice='%s'",
+                            tts_model,
+                            tts_voice,
+                        )
+                    else:
+                        # TTS not selected - use defaults
+                        final_options[CONF_TTS_MODEL] = RECOMMENDED_TTS_MODEL
+                        final_options[CONF_TTS_VOICE] = RECOMMENDED_TTS_VOICE
+                        _LOGGER.debug(
+                            "TTS not selected, using defaults: model='%s', voice='%s'",
+                            RECOMMENDED_TTS_MODEL,
+                            RECOMMENDED_TTS_VOICE,
+                        )
+
+                    _LOGGER.debug("Final options to save: %s", final_options)
                     return self.async_create_entry(title="", data=final_options)
+            except Exception as err:
+                _LOGGER.exception("Error processing options: %s", err)
+                errors["base"] = "unknown"
 
         # --- Build schema and suggested values for this render ---
         options_schema = self._build_options_schema(
@@ -714,7 +795,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
             CONF_TOP_P: RECOMMENDED_TOP_P,
             CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
-            CONF_LLM_HASS_API: "",
+            CONF_LLM_HASS_API: "assist",  # Default to "assist" for HA control
             CONF_STRIP_THINKING_RESPONSE: RECOMMENDED_STRIP_THINKING_RESPONSE,
             CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
             CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
