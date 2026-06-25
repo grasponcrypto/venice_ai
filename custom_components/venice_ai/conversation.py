@@ -95,21 +95,32 @@ def _strip_thinking(text: str) -> str:
 
 
 def _convert_schema_to_hashable(obj: Any) -> Any:
-    """Recursively convert a voluptuous schema into a hashable representation."""
+    """Recursively convert a voluptuous schema into a representation that
+    voluptuous_openapi can handle.
+    
+    The main issue is that some HA tools have schemas with:
+    1. Required/Optional wrappers around Selector objects as keys (unhashable)
+    2. Selector objects as values (unhashable)
+    
+    We convert all selector objects to str, and convert dict keys to strings
+    when they're wrapped selectors. We return a regular dict (not frozenset)
+    because voluptuous_openapi expects dict-like structures.
+    """
     if isinstance(obj, dict):
-        items = []
+        result = {}
         for k, v in obj.items():
             # Keys may be Required/Optional wrappers around selectors, which
             # aren't hashable. Convert such keys to their string representation.
             hashable_k = k
             if hasattr(k, "schema") and isinstance(k.schema, selector.Selector):
-                hashable_k = str(k)
+                # Unwrap Required/Optional and use the inner selector's string repr
+                hashable_k = str(k.schema)
             elif isinstance(k, selector.Selector):
                 hashable_k = str(k)
-            items.append((hashable_k, _convert_schema_to_hashable(v)))
-        return frozenset(items)
+            result[hashable_k] = _convert_schema_to_hashable(v)
+        return result
     if isinstance(obj, list):
-        return tuple(_convert_schema_to_hashable(v) for v in obj)
+        return [_convert_schema_to_hashable(v) for v in obj]
     if isinstance(obj, selector.Selector):
         _LOGGER.debug(
             "_convert_schema_to_hashable: replacing selector %s with str",
