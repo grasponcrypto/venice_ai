@@ -695,19 +695,64 @@ class VeniceAIConversationEntity(ConversationEntity):
 
                 if not tool_calls:
                     _total_elapsed = time.monotonic() - _turn_start
-                    # When the model was cut off and returned no usable text,
-                    # surface a clear error rather than silently returning "".
-                    if finish_reason == "length" and not text_content.strip():
-                        _LOGGER.warning(
-                            "[PERF] [+%.3fs] finish_reason=length AND empty content — "
-                            "returning error message to user instead of blank response",
-                            _total_elapsed,
-                        )
-                        assistant_response_content = (
-                            "I'm sorry, my response was cut off because it exceeded the maximum "
-                            "token limit. Please try a shorter question or increase the Max Tokens "
-                            "setting in the Venice AI integration options."
-                        )
+                    visible_content = text_content.strip()
+
+                    if not visible_content:
+                        # Empty response — determine why and surface a helpful message.
+                        if finish_reason == "length":
+                            # Model hit the max_tokens cap before producing any output.
+                            _LOGGER.warning(
+                                "[PERF] [+%.3fs] finish_reason=length AND empty content — "
+                                "response was fully truncated (max_tokens=%d)",
+                                _total_elapsed,
+                                max_tokens,
+                            )
+                            assistant_response_content = (
+                                "I'm sorry, my response was cut off because it exceeded the maximum "
+                                "token limit. Please try a shorter question or increase the Max Tokens "
+                                "setting in the Venice AI integration options."
+                            )
+                        elif strip_thinking:
+                            # Most likely the model returned ONLY a <think> block and no
+                            # visible text after it — common with reasoning models when
+                            # strip_thinking is enabled. Return the raw (un-stripped) text
+                            # so the user gets something rather than silence.
+                            raw_content = message.get("content", "")
+                            if raw_content.strip():
+                                _LOGGER.warning(
+                                    "[PERF] [+%.3fs] strip_thinking removed ALL content "
+                                    "(finish_reason=%r) — returning raw model output so user "
+                                    "sees a response. Consider disabling strip_thinking or "
+                                    "using a model that emits text outside <think> blocks. "
+                                    "Raw content (first 200 chars): %r",
+                                    _total_elapsed,
+                                    finish_reason,
+                                    raw_content[:200],
+                                )
+                                assistant_response_content = raw_content
+                            else:
+                                _LOGGER.warning(
+                                    "[PERF] [+%.3fs] Model returned empty content "
+                                    "(finish_reason=%r, strip_thinking=True) — "
+                                    "raw content is also empty",
+                                    _total_elapsed,
+                                    finish_reason,
+                                )
+                                assistant_response_content = (
+                                    "I didn't receive a response from the model. "
+                                    "Please try again."
+                                )
+                        else:
+                            _LOGGER.warning(
+                                "[PERF] [+%.3fs] Model returned empty content "
+                                "(finish_reason=%r) — returning fallback message",
+                                _total_elapsed,
+                                finish_reason,
+                            )
+                            assistant_response_content = (
+                                "I didn't receive a response from the model. "
+                                "Please try again."
+                            )
                     else:
                         _LOGGER.debug(
                             "[PERF] [+%.3fs] No tool calls — final response ready after %d API call(s). "
