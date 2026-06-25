@@ -66,26 +66,27 @@ _LOGGER = logging.getLogger(__name__)
 # HA's llm.DEFAULT_INSTRUCTIONS_PROMPT handles entity states, date/time, and tool instructions.
 DEFAULT_SYSTEM_PROMPT = "You are a helpful smart home assistant. Be concise and friendly."
 
+
 def _strip_thinking(text: str) -> str:
-    """Remove <think>…</think> (or  thinking… end of thinking ) blocks from model output.
+    """Remove <think>...</think> blocks from model output.
 
     Handles both the XML-style tags used by some reasoning models and the
-    literal `` thinking`` / `` end of thinking`` markers emitted by Venice AI.
+    literal ' thinking' / ' end of thinking' markers emitted by Venice AI.
     """
     if not text:
         return text
-    # XML-style <think>…</think>
+    # XML-style <think>...</think>
     while True:
         start = text.lower().find("<think>")
         if start == -1:
             break
         end = text.lower().find("</think>", start)
         if end == -1:
-            # unmatched open tag – strip to end to be safe
+            # unmatched open tag - strip to end to be safe
             text = text[:start].strip()
             break
         text = text[:start] + text[end + 8:]
-    # Venice-style  thinking… end of thinking
+    # Venice-style ' thinking' ... ' end of thinking'
     if " thinking" in text:
         parts = text.split(" end of thinking")
         if len(parts) > 1:
@@ -96,7 +97,17 @@ def _strip_thinking(text: str) -> str:
 def _convert_schema_to_hashable(obj: Any) -> Any:
     """Recursively convert a voluptuous schema into a hashable representation."""
     if isinstance(obj, dict):
-        return frozenset((k, _convert_schema_to_hashable(v)) for k, v in obj.items())
+        items = []
+        for k, v in obj.items():
+            # Keys may be Required/Optional wrappers around selectors, which
+            # aren't hashable. Convert such keys to their string representation.
+            hashable_k = k
+            if hasattr(k, "schema") and isinstance(k.schema, selector.Selector):
+                hashable_k = str(k)
+            elif isinstance(k, selector.Selector):
+                hashable_k = str(k)
+            items.append((hashable_k, _convert_schema_to_hashable(v)))
+        return frozenset(items)
     if isinstance(obj, list):
         return tuple(_convert_schema_to_hashable(v) for v in obj)
     if isinstance(obj, selector.Selector):
@@ -104,6 +115,9 @@ def _convert_schema_to_hashable(obj: Any) -> Any:
             "_convert_schema_to_hashable: replacing selector %s with str",
             obj.__class__.__name__,
         )
+        return str
+    # Handle Required/Optional wrappers that contain selectors
+    if hasattr(obj, "schema") and isinstance(obj.schema, selector.Selector):
         return str
     return obj
 
@@ -433,7 +447,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         chat_log: ChatLog,
     ) -> ConversationResult:
         """Process a conversation input.
-        
+
         This method is called by the base class async_process after HA manages
         the chat session and chat log. We delegate system prompt assembly to
         HA's chat_log.async_provide_llm_data() which properly injects entity
@@ -449,7 +463,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         llm_api = options.get(CONF_LLM_HASS_API)
 
         # Let HA build the full system prompt via async_provide_llm_data.
-        # This properly assembles: [personality prompt] + [entity state/api_prompt] + 
+        # This properly assembles: [personality prompt] + [entity state/api_prompt] +
         # [date/time] + [extra_system_prompt from voice assistant config].
         # The entity state is injected into chat_log.content[0] as SystemContent.
         # Tools are populated in chat_log.llm_api.tools.
@@ -471,8 +485,27 @@ class VeniceAIConversationEntity(ConversationEntity):
         if chat_log.content and isinstance(chat_log.content[0], SystemContent):
             system_prompt = chat_log.content[0].content
             _LOGGER.debug(
-                "System prompt assembled by HA: %d chars, entity context included",
+                "System prompt assembled by HA: %d chars",
                 len(system_prompt),
+            )
+            # DEBUG: Log first 2000 chars of system prompt to see if entity states are included
+            _LOGGER.debug(
+                "System prompt content (first 2000 chars): %s",
+                system_prompt[:2000],
+            )
+            # Check for common entity state indicators
+            if "sensor" in system_prompt.lower() or "climate" in system_prompt.lower() or "state" in system_prompt.lower():
+                _LOGGER.debug("System prompt appears to contain entity state information")
+            else:
+                _LOGGER.warning(
+                    "System prompt does NOT appear to contain entity states. "
+                    "Check voice assistant configuration - ensure 'api_prompt' is set."
+                )
+        else:
+            _LOGGER.warning(
+                "No SystemContent found in chat_log.content[0]. "
+                "chat_log.content has %d items. Entity states may not be injected.",
+                len(chat_log.content) if chat_log.content else 0,
             )
 
         # Convert tools to Venice format
@@ -526,7 +559,7 @@ class VeniceAIConversationEntity(ConversationEntity):
             _total_prompt_tokens = 0
             _total_completion_tokens = 0
             _LOGGER.debug(
-                "[PERF] [+0.000s] Turn received at %s — conversation=%s, user_text=%d chars, "
+                "[PERF] [+0.000s] Turn received at %s - conversation=%s, user_text=%d chars, "
                 "model=%s, stream=%s, tools=%d",
                 datetime.datetime.now().isoformat(timespec="milliseconds"),
                 chat_log.conversation_id,
@@ -573,7 +606,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                 else:
                     _call_label = f"API call after tool results (iteration {iteration + 1})"
                 _LOGGER.debug(
-                    "[PERF] [+%.3fs] %s → Venice AI: messages=%d, tools=%d, stream=%s",
+                    "[PERF] [+%.3fs] %s -> Venice AI: messages=%d, tools=%d, stream=%s",
                     _elapsed_so_far,
                     _call_label,
                     len(messages),
@@ -660,7 +693,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                 if finish_reason == "length":
                     _LOGGER.warning(
                         "[PERF] API call #%d stopped due to max_tokens limit (%d). "
-                        "The response was TRUNCATED — increase Max Tokens in the integration options "
+                        "The response was TRUNCATED - increase Max Tokens in the integration options "
                         "if responses are incomplete. Total elapsed: +%.3fs",
                         iteration + 1,
                         max_tokens,
@@ -681,7 +714,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     # Always log before/after so we can diagnose reasoning models
                     # that emit only <think> blocks (which strip to nothing).
                     _LOGGER.debug(
-                        "[PERF] [+%.3fs] strip_thinking applied: raw=%d chars → stripped=%d chars "
+                        "[PERF] [+%.3fs] strip_thinking applied: raw=%d chars -> stripped=%d chars "
                         "| RAW (first 500): %r | STRIPPED (first 500): %r",
                         time.monotonic() - _turn_start,
                         len(raw_text_content),
@@ -698,11 +731,11 @@ class VeniceAIConversationEntity(ConversationEntity):
                     visible_content = text_content.strip()
 
                     if not visible_content:
-                        # Empty response — determine why and surface a helpful message.
+                        # Empty response - determine why and surface a helpful message.
                         if finish_reason == "length":
                             # Model hit the max_tokens cap before producing any output.
                             _LOGGER.warning(
-                                "[PERF] [+%.3fs] finish_reason=length AND empty content — "
+                                "[PERF] [+%.3fs] finish_reason=length AND empty content - "
                                 "response was fully truncated (max_tokens=%d)",
                                 _total_elapsed,
                                 max_tokens,
@@ -714,14 +747,14 @@ class VeniceAIConversationEntity(ConversationEntity):
                             )
                         elif strip_thinking:
                             # Most likely the model returned ONLY a <think> block and no
-                            # visible text after it — common with reasoning models when
+                            # visible text after it - common with reasoning models when
                             # strip_thinking is enabled. Return the raw (un-stripped) text
                             # so the user gets something rather than silence.
                             raw_content = message.get("content", "")
                             if raw_content.strip():
                                 _LOGGER.warning(
                                     "[PERF] [+%.3fs] strip_thinking removed ALL content "
-                                    "(finish_reason=%r) — returning raw model output so user "
+                                    "(finish_reason=%r) - returning raw model output so user "
                                     "sees a response. Consider disabling strip_thinking or "
                                     "using a model that emits text outside <think> blocks. "
                                     "Raw content (first 200 chars): %r",
@@ -733,7 +766,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                             else:
                                 _LOGGER.warning(
                                     "[PERF] [+%.3fs] Model returned empty content "
-                                    "(finish_reason=%r, strip_thinking=True) — "
+                                    "(finish_reason=%r, strip_thinking=True) - "
                                     "raw content is also empty",
                                     _total_elapsed,
                                     finish_reason,
@@ -745,7 +778,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                         else:
                             _LOGGER.warning(
                                 "[PERF] [+%.3fs] Model returned empty content "
-                                "(finish_reason=%r) — returning fallback message",
+                                "(finish_reason=%r) - returning fallback message",
                                 _total_elapsed,
                                 finish_reason,
                             )
@@ -755,7 +788,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                             )
                     else:
                         _LOGGER.debug(
-                            "[PERF] [+%.3fs] No tool calls — final response ready after %d API call(s). "
+                            "[PERF] [+%.3fs] No tool calls - final response ready after %d API call(s). "
                             "Total tokens this turn: prompt=%d, completion=%d (%.3fs total)",
                             _total_elapsed,
                             iteration + 1,
@@ -780,7 +813,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                 chat_log.content.append(assistant_content)
 
                 _LOGGER.debug(
-                    "[PERF] [+%.3fs] Tool call(s) requested (%d): %s — dispatching now",
+                    "[PERF] [+%.3fs] Tool call(s) requested (%d): %s - dispatching now",
                     time.monotonic() - _turn_start,
                     len(tool_calls),
                     [tc.get("function", {}).get("name") for tc in tool_calls],
@@ -868,7 +901,23 @@ class VeniceAIConversationEntity(ConversationEntity):
                                         tool_name=tool_name,
                                         tool_args=tool_args,
                                     )
-                                tool_result = await tool.async_call(self.hass, tool_input)
+                                # Some tools (e.g. GetLiveContext) have non-standard
+                                # async_call signatures that require extra parameters
+                                # like llm_context. Inspect the signature to determine
+                                # what parameters are needed.
+                                import inspect
+                                sig = inspect.signature(tool.async_call)
+                                params = list(sig.parameters.keys())
+                                _LOGGER.debug(
+                                    "Tool %s async_call signature params: %s",
+                                    tool_name,
+                                    params,
+                                )
+                                # Build call args based on signature
+                                call_kwargs = {}
+                                if "llm_context" in params:
+                                    call_kwargs["llm_context"] = user_input.as_llm_context(DOMAIN)
+                                tool_result = await tool.async_call(self.hass, tool_input, **call_kwargs)
                                 _LOGGER.debug(
                                     "[PERF] [+%.3fs] HA tool %s returned in %.3fs: %s",
                                     time.monotonic() - _turn_start,
@@ -886,7 +935,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                         tool_result = {
                             "error": (
                                 f"Tool '{tool_name}' is not available. "
-                                "Current entity states are in your system context — read from there."
+                                "Current entity states are in your system context - read from there."
                             )
                         }
 
@@ -977,7 +1026,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         _total_turn_elapsed = time.monotonic() - _turn_start
         intent_response.async_set_speech(assistant_response_content)
         _LOGGER.debug(
-            "[PERF] [+%.3fs] Response dispatched to user — conversation=%s, "
+            "[PERF] [+%.3fs] Response dispatched to user - conversation=%s, "
             "%d messages in log, response=%d chars: %r",
             _total_turn_elapsed,
             chat_log.conversation_id,
@@ -995,7 +1044,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         """Start the HIGH-2 cleanup loop.
 
         NOTE: No add_update_listener is registered here because VeniceAIOptionsFlow
-        subclasses OptionsFlowWithReload (HA ≥ 2024.1), which automatically reloads
+        subclasses OptionsFlowWithReload (HA >= 2024.1), which automatically reloads
         the entire integration when options are saved. Registering an update listener
         alongside OptionsFlowWithReload raises:
             ValueError: Config entry update listeners should not be used with OptionsFlowWithReload
