@@ -308,14 +308,20 @@ class VeniceConversationService:
             tool_calls_by_index[i] for i in sorted(tool_calls_by_index)
         ]
         _total_elapsed = _time.monotonic() - _stream_open_t
+        # Log full raw accumulated content at DEBUG so we can diagnose model-specific
+        # quirks (e.g. reasoning models that emit only <think> blocks).
+        # Truncated at 1000 chars to keep logs readable; the full length is always shown.
+        _raw = result.content
         _LOGGER.debug(
             "[PERF] chat_stream — complete: %d chars, %d tool call(s), finish_reason=%r, "
-            "time_to_first_token=%.3fs, total_elapsed=%.3fs",
-            len(result.content),
+            "time_to_first_token=%.3fs, total_elapsed=%.3fs | RAW CONTENT (%d chars): %r",
+            len(_raw),
             len(result.tool_calls),
             result.finish_reason,
             result.time_to_first_token or 0.0,
             _total_elapsed,
+            len(_raw),
+            _raw[:1000] if len(_raw) > 1000 else _raw,
         )
         return result
 

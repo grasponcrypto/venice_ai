@@ -688,9 +688,22 @@ class VeniceAIConversationEntity(ConversationEntity):
                     )
                     raise HomeAssistantError("Received invalid message format")
 
-                text_content = message.get("content", "")
+                raw_text_content = message.get("content", "") or ""
                 if strip_thinking:
-                    text_content = _strip_thinking(text_content)
+                    text_content = _strip_thinking(raw_text_content)
+                    # Always log before/after so we can diagnose reasoning models
+                    # that emit only <think> blocks (which strip to nothing).
+                    _LOGGER.debug(
+                        "[PERF] [+%.3fs] strip_thinking applied: raw=%d chars → stripped=%d chars "
+                        "| RAW (first 500): %r | STRIPPED (first 500): %r",
+                        time.monotonic() - _turn_start,
+                        len(raw_text_content),
+                        len(text_content),
+                        raw_text_content[:500],
+                        text_content[:500],
+                    )
+                else:
+                    text_content = raw_text_content
                 tool_calls = message.get("tool_calls", [])
 
                 if not tool_calls:
