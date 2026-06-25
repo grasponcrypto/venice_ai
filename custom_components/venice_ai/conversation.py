@@ -62,8 +62,9 @@ if HAS_VOLUPTUOUS_OPENAPI:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Default system prompt for Venice AI
-DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant controlling a smart home. You can control lights, switches, climate, media players, and other devices. Always be concise and helpful."""
+# Default system prompt for Venice AI - short personality string only.
+# HA's llm.DEFAULT_INSTRUCTIONS_PROMPT handles entity states, date/time, and tool instructions.
+DEFAULT_SYSTEM_PROMPT = "You are a helpful smart home assistant. Be concise and friendly."
 
 def _strip_thinking(text: str) -> str:
     """Remove <think>…</think> (or  thinking… end of thinking ) blocks from model output.
@@ -426,84 +427,53 @@ class VeniceAIConversationEntity(ConversationEntity):
         """Return list of supported options."""
         return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS, CONF_STRIP_THINKING_RESPONSE, CONF_DISABLE_THINKING, CONF_STREAM_RESPONSE]
 
-    async def async_process(
-        self, user_input: ConversationInput
+    async def _async_handle_message(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
     ) -> ConversationResult:
-        """Process a conversation input."""
+        """Process a conversation input.
+        
+        This method is called by the base class async_process after HA manages
+        the chat session and chat log. We delegate system prompt assembly to
+        HA's chat_log.async_provide_llm_data() which properly injects entity
+        state, date/time, and tool instructions.
+        """
         options = self.entry.options
         model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         max_tokens = options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
         temperature = options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
         top_p = options.get(CONF_TOP_P, RECOMMENDED_TOP_P)
         strip_thinking = options.get(CONF_STRIP_THINKING_RESPONSE, False)
-        prompt_template_str = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
+        user_llm_prompt = options.get(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
         llm_api = options.get(CONF_LLM_HASS_API)
 
-        # Render system prompt template with Home Assistant context so
-        # template functions (e.g. now(), states(), area_entities()) work.
-        # MED-2: cache compiled Template objects keyed by their source string so
-        # repeated turns with the same prompt skip the parse step.
+        # Let HA build the full system prompt via async_provide_llm_data.
+        # This properly assembles: [personality prompt] + [entity state/api_prompt] + 
+        # [date/time] + [extra_system_prompt from voice assistant config].
+        # The entity state is injected into chat_log.content[0] as SystemContent.
+        # Tools are populated in chat_log.llm_api.tools.
         try:
-            prompt_template = self._template_cache.get(prompt_template_str)
-            if prompt_template is None:
-                prompt_template = Template(prompt_template_str, self.hass)
-                # Bound the cache so a user editing the prompt to many distinct
-                # strings cannot grow the cache unboundedly.
-                if len(self._template_cache) >= 32:
-                    self._template_cache.pop(next(iter(self._template_cache)))
-                self._template_cache[prompt_template_str] = prompt_template
-            system_prompt = prompt_template.async_render()
-        except TemplateError as err:
-            _LOGGER.error("Error rendering prompt template: %s", err)
-            raise HomeAssistantError(f"Error rendering prompt: {err}") from err
+            await chat_log.async_provide_llm_data(
+                llm_context=user_input.as_llm_context(DOMAIN),
+                user_llm_hass_api=llm_api,
+                user_llm_prompt=user_llm_prompt,
+            )
+        except Exception as err:
+            _LOGGER.error("Error providing LLM data to chat log: %s", err)
+            raise HomeAssistantError(f"Error setting up conversation context: {err}") from err
 
-        # Set up LLM API if configured
-        tools: list[llm.Tool] = []
-        if llm_api:
-            try:
-                # LLMContext signature changed across HA versions:
-                # - HA < 2024.7: accepts user_prompt, language, assistant, device_id
-                # - HA ≥ 2024.7: may drop some kwargs or reorder them
-                # Try the full signature first; fall back to a minimal one.
-                try:
-                    llm_context = llm.LLMContext(
-                        platform=DOMAIN,
-                        context=user_input.context,
-                        user_prompt=user_input.text,
-                        language=user_input.language,
-                        assistant=HOME_ASSISTANT_AGENT,
-                        device_id=user_input.device_id,
-                    )
-                except TypeError:
-                    # Newer HA dropped some kwargs — use positional/minimal form
-                    llm_context = llm.LLMContext(
-                        platform=DOMAIN,
-                        context=user_input.context,
-                        language=user_input.language,
-                        assistant=HOME_ASSISTANT_AGENT,
-                        device_id=user_input.device_id,
-                    )
-                api = await llm.async_get_api(self.hass, llm_api, llm_context)
-                tools = list(api.tools)
-                # api_prompt is the entity-state context block generated by the
-                # assist LLM API from the entities exposed in the assistant config.
-                # Without this the model has no knowledge of home state/devices.
-                llm_api_prompt = getattr(api, "api_prompt", "") or ""
-                if llm_api_prompt:
-                    _LOGGER.debug(
-                        "LLM API entity context obtained: %d chars, %d exposed entities (approx)",
-                        len(llm_api_prompt),
-                        llm_api_prompt.count("\n"),
-                    )
-                    system_prompt = system_prompt + "\n\n" + llm_api_prompt
-                else:
-                    _LOGGER.warning(
-                        "LLM API %r returned no api_prompt — model will have no entity context. "
-                        "Ensure entities are exposed to the assistant in Settings → Voice assistants.",
-                        llm_api,
-                    )
-            except Exception as err:
-                _LOGGER.warning("Failed to get LLM API %s: %s", llm_api, err)
+        # Get tools from the chat_log (HA populates this in async_provide_llm_data)
+        tools: list[llm.Tool] = list(chat_log.llm_api.tools) if chat_log.llm_api else []
+
+        # Extract the system prompt that HA assembled (stored in chat_log.content[0])
+        system_prompt = ""
+        if chat_log.content and isinstance(chat_log.content[0], SystemContent):
+            system_prompt = chat_log.content[0].content
+            _LOGGER.debug(
+                "System prompt assembled by HA: %d chars, entity context included",
+                len(system_prompt),
+            )
 
         # Convert tools to Venice format
         venice_tools = []
@@ -542,9 +512,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                 [t["function"]["name"] for t in venice_tools],
             )
 
-        # Retrieve existing chat log or create a new one, then append the new user message.
-        # History is persisted across calls so the model has full multi-turn context.
-        chat_log = self._get_or_create_chat_log(user_input.conversation_id)
+        # The chat_log is passed in by HA's base class async_process.
+        # HA manages the chat session and history persistence.
+        # Append the new user message to the chat log.
         chat_log.content.append(UserContent(content=user_input.text))
 
         assistant_response_content = None
@@ -912,8 +882,13 @@ class VeniceAIConversationEntity(ConversationEntity):
                             break
 
                     if tool_result is None:
-                        _LOGGER.warning("Tool %s not found", tool_name)
-                        tool_result = {"error": f"Tool {tool_name} not found"}
+                        _LOGGER.warning("Tool %s not found in HA Assist API tools list", tool_name)
+                        tool_result = {
+                            "error": (
+                                f"Tool '{tool_name}' is not available. "
+                                "Current entity states are in your system context — read from there."
+                            )
+                        }
 
                     # ToolResultContent signature varies across HA versions:
                     # - older HA: ToolResultContent(tool_call_id, tool_result)
