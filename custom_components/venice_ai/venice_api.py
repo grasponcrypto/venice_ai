@@ -121,6 +121,7 @@ class StreamingChatResult:
 
     content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    finish_reason: str = "unknown"
 
     def as_message(self) -> dict[str, Any]:
         """Return an assistant ``message`` dict like the non-streaming API."""
@@ -131,7 +132,12 @@ class StreamingChatResult:
 
     def as_response(self) -> dict[str, Any]:
         """Return a response envelope shaped like the non-streaming API."""
-        return {"choices": [{"message": self.as_message()}]}
+        return {
+            "choices": [{
+                "message": self.as_message(),
+                "finish_reason": self.finish_reason,
+            }]
+        }
 
     def typed_tool_calls(self) -> list[ToolCall]:
         """PERF-3: return tool calls as :class:`ToolCall` objects, skipping malformed ones."""
@@ -213,27 +219,73 @@ class VeniceConversationService:
         ) as stream:
             async for chunk in stream:
                 for choice in chunk.choices:
-                    delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
-                    if not isinstance(delta, dict):
-                        continue
+                    # The SDK may return choices as objects (with attributes) or
+                    # as dicts depending on the SDK version. Support both.
+                    if isinstance(choice, dict):
+                        raw_delta = choice.get("delta", {})
+                        finish_reason = choice.get("finish_reason")
+                    else:
+                        raw_delta = getattr(choice, "delta", None)
+                        finish_reason = getattr(choice, "finish_reason", None)
 
-                    content_piece = delta.get("content")
+                    if finish_reason:
+                        result.finish_reason = finish_reason
+
+                    # Normalise delta to a plain dict for uniform access.
+                    if raw_delta is None:
+                        continue
+                    if isinstance(raw_delta, dict):
+                        delta = raw_delta
+                    else:
+                        # Object-style delta: convert to dict via __dict__ or
+                        # attribute access. getattr fallback prevents AttributeError
+                        # on SDK-version mismatches.
+                        delta = getattr(raw_delta, "__dict__", None)
+                        if delta is None:
+                            try:
+                                delta = {
+                                    "content": getattr(raw_delta, "content", None),
+                                    "tool_calls": getattr(raw_delta, "tool_calls", None),
+                                }
+                            except Exception:
+                                continue
+
+                    content_piece = delta.get("content") if isinstance(delta, dict) else None
                     if content_piece:
                         result.content += content_piece
                         if on_delta is not None:
                             await _maybe_await(on_delta, content_piece)
 
-                    for tc in delta.get("tool_calls", []) or []:
-                        _merge_tool_call_fragment(tool_calls_by_index, tc)
+                    tool_calls_raw = delta.get("tool_calls") if isinstance(delta, dict) else None
+                    for tc in tool_calls_raw or []:
+                        if isinstance(tc, dict):
+                            _merge_tool_call_fragment(tool_calls_by_index, tc)
+                        else:
+                            # Object-style tool call fragment
+                            try:
+                                func = getattr(tc, "function", None)
+                                tc_dict = {
+                                    "index": getattr(tc, "index", 0),
+                                    "id": getattr(tc, "id", None),
+                                    "type": getattr(tc, "type", "function"),
+                                    "function": {
+                                        "name": getattr(func, "name", "") if func else "",
+                                        "arguments": getattr(func, "arguments", "") if func else "",
+                                    },
+                                }
+                                _merge_tool_call_fragment(tool_calls_by_index, tc_dict)
+                            except Exception as exc:
+                                _LOGGER.debug("Skipping malformed tool-call fragment: %s", exc)
 
         # Emit reconstructed tool calls in index order.
         result.tool_calls = [
             tool_calls_by_index[i] for i in sorted(tool_calls_by_index)
         ]
         _LOGGER.debug(
-            "Streaming chat complete: %d chars, %d tool call(s)",
+            "Streaming chat complete: %d chars, %d tool call(s), finish_reason=%r",
             len(result.content),
             len(result.tool_calls),
+            result.finish_reason,
         )
         return result
 

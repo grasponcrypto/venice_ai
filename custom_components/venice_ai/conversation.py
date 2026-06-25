@@ -506,6 +506,24 @@ class VeniceAIConversationEntity(ConversationEntity):
                 tool_dict["function"]["parameters"] = parameters_schema or {"type": "object", "properties": {}}
             venice_tools.append(tool_dict)
 
+        # NumberSelector stores values as floats; cast to int so range() works.
+        max_tool_iterations = int(options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS))
+
+        _LOGGER.debug(
+            "Conversation turn starting: llm_api=%r, tools_available=%d, model=%s, "
+            "max_tool_iterations=%d, stream=%s",
+            llm_api,
+            len(venice_tools),
+            model,
+            max_tool_iterations,
+            options.get(CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE),
+        )
+        if venice_tools:
+            _LOGGER.debug(
+                "Tools being sent to API: %s",
+                [t["function"]["name"] for t in venice_tools],
+            )
+
         # Retrieve existing chat log or create a new one, then append the new user message.
         # History is persisted across calls so the model has full multi-turn context.
         chat_log = self._get_or_create_chat_log(user_input.conversation_id)
@@ -514,11 +532,12 @@ class VeniceAIConversationEntity(ConversationEntity):
         assistant_response_content = None
         text_content = ""
 
-        # NumberSelector stores values as floats; cast to int so range() works.
-        max_tool_iterations = int(options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS))
-
         try:
             _trim_chat_log(chat_log)
+            _turn_start = time.monotonic()
+            _total_prompt_tokens = 0
+            _total_completion_tokens = 0
+
             for iteration in range(max_tool_iterations):
                 messages = _convert_chat_log_to_venice_messages(
                     chat_log, system_prompt, strip_thinking=strip_thinking
@@ -549,6 +568,17 @@ class VeniceAIConversationEntity(ConversationEntity):
                     tools=venice_tools if venice_tools else None,
                     venice_parameters=venice_params,
                 )
+
+                _LOGGER.debug(
+                    "API call #%d/%d: messages=%d, tools_in_request=%d, stream=%s",
+                    iteration + 1,
+                    max_tool_iterations,
+                    len(messages),
+                    len(venice_tools),
+                    stream_response,
+                )
+                _iter_start = time.monotonic()
+
                 if stream_response:
                     stream_result = await self._service.chat_stream(
                         messages, chat_params
@@ -556,6 +586,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                     response_data = stream_result.as_response()
                 else:
                     response_data = await self._service.chat(messages, chat_params)
+
+                _iter_elapsed = time.monotonic() - _iter_start
+
                 if not isinstance(response_data, dict):
                     _LOGGER.error(
                         "Invalid response type from Venice AI: %s",
@@ -569,6 +602,29 @@ class VeniceAIConversationEntity(ConversationEntity):
                     _LOGGER.error("Invalid response from Venice AI: %s", response_data)
                     raise HomeAssistantError("Received invalid response")
 
+                # Log token usage if available in the response
+                usage = response_data.get("usage", {})
+                if usage:
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+                    total_tokens = usage.get("total_tokens", 0)
+                    _total_prompt_tokens += prompt_tokens
+                    _total_completion_tokens += completion_tokens
+                    _LOGGER.debug(
+                        "API call #%d token usage: prompt=%d, completion=%d, total=%d (%.2fs)",
+                        iteration + 1,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                        _iter_elapsed,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "API call #%d completed in %.2fs (no token usage in response)",
+                        iteration + 1,
+                        _iter_elapsed,
+                    )
+
                 choice = response_data["choices"][0]
                 if not isinstance(choice, dict):
                     _LOGGER.error(
@@ -576,6 +632,13 @@ class VeniceAIConversationEntity(ConversationEntity):
                         type(choice).__name__,
                     )
                     raise HomeAssistantError("Received invalid choice format")
+
+                finish_reason = choice.get("finish_reason", "unknown")
+                _LOGGER.debug(
+                    "API call #%d finish_reason=%r",
+                    iteration + 1,
+                    finish_reason,
+                )
 
                 message = choice.get("message", {})
                 if not isinstance(message, dict):
@@ -591,6 +654,14 @@ class VeniceAIConversationEntity(ConversationEntity):
                 tool_calls = message.get("tool_calls", [])
 
                 if not tool_calls:
+                    _LOGGER.debug(
+                        "No tool calls in response — breaking after %d API call(s). "
+                        "Total tokens this turn: prompt=%d, completion=%d (%.2fs total)",
+                        iteration + 1,
+                        _total_prompt_tokens,
+                        _total_completion_tokens,
+                        time.monotonic() - _turn_start,
+                    )
                     assistant_response_content = text_content
                     break
 
@@ -607,6 +678,13 @@ class VeniceAIConversationEntity(ConversationEntity):
                 )
                 chat_log.content.append(assistant_content)
 
+                _LOGGER.debug(
+                    "API call #%d returned %d tool call(s): %s",
+                    iteration + 1,
+                    len(tool_calls),
+                    [tc.get("function", {}).get("name") for tc in tool_calls],
+                )
+
                 for tool_call_data in tool_calls:
                     call_id = tool_call_data.get("id")
                     func_details = tool_call_data.get("function", {})
@@ -620,6 +698,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                     if not tool_name:
                         _LOGGER.warning("Tool call missing name: %s", tool_call_data)
                         continue
+
+                    _LOGGER.debug(
+                        "Executing tool: %s, args: %s",
+                        tool_name,
+                        tool_args_str,
+                    )
 
                     try:
                         tool_args = json.loads(tool_args_str)
@@ -653,6 +737,7 @@ class VeniceAIConversationEntity(ConversationEntity):
 
                     # Find matching tool and invoke via the public HA LLM API
                     tool_result = None
+                    _tool_start = time.monotonic()
                     for tool in tools:
                         if tool.name == tool_name:
                             try:
@@ -666,6 +751,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                                     device_id=user_input.device_id,
                                 )
                                 tool_result = await tool.async_call(self.hass, tool_input)
+                                _LOGGER.debug(
+                                    "Tool %s succeeded in %.2fs: %s",
+                                    tool_name,
+                                    time.monotonic() - _tool_start,
+                                    tool_result,
+                                )
                             except Exception as tool_err:
                                 _LOGGER.warning("Tool %s failed: %s", tool_name, tool_err)
                                 tool_result = {"error": str(tool_err)}
@@ -684,7 +775,14 @@ class VeniceAIConversationEntity(ConversationEntity):
                 # Trim chat log to prevent unbounded growth after processing all tool calls
                 _trim_chat_log(chat_log)
             else:
-                _LOGGER.warning("Reached max tool iterations (%d)", max_tool_iterations)
+                _LOGGER.warning(
+                    "Reached max tool iterations (%d). Total tokens this turn: "
+                    "prompt=%d, completion=%d (%.2fs total)",
+                    max_tool_iterations,
+                    _total_prompt_tokens,
+                    _total_completion_tokens,
+                    time.monotonic() - _turn_start,
+                )
                 assistant_response_content = text_content or ""
 
             if assistant_response_content is None:
@@ -743,9 +841,11 @@ class VeniceAIConversationEntity(ConversationEntity):
         intent_response = intent.IntentResponse(language=user_input.language)
         intent_response.async_set_speech(assistant_response_content)
         _LOGGER.debug(
-            "Conversation %s completed (%d messages in log)",
+            "Conversation %s completed (%d messages in log). Response text (%d chars): %r",
             chat_log.conversation_id,
             len(chat_log.content),
+            len(assistant_response_content),
+            assistant_response_content[:200] if assistant_response_content else "<empty>",
         )
 
         return ConversationResult(
