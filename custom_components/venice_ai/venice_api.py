@@ -123,6 +123,7 @@ class StreamingChatResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str = "unknown"
     time_to_first_token: float | None = None  # seconds from stream open to first content delta
+    usage: dict[str, Any] = field(default_factory=dict)  # token usage from final stream chunk
 
     def as_message(self) -> dict[str, Any]:
         """Return an assistant ``message`` dict like the non-streaming API."""
@@ -133,12 +134,15 @@ class StreamingChatResult:
 
     def as_response(self) -> dict[str, Any]:
         """Return a response envelope shaped like the non-streaming API."""
-        return {
+        resp: dict[str, Any] = {
             "choices": [{
                 "message": self.as_message(),
                 "finish_reason": self.finish_reason,
             }]
         }
+        if self.usage:
+            resp["usage"] = self.usage
+        return resp
 
     def typed_tool_calls(self) -> list[ToolCall]:
         """PERF-3: return tool calls as :class:`ToolCall` objects, skipping malformed ones."""
@@ -210,6 +214,12 @@ class VeniceConversationService:
         # Tool calls keyed by their streaming ``index`` for incremental merge.
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
         _stream_open_t = _time.monotonic()
+        _LOGGER.debug(
+            "[PERF] chat_stream — starting stream (model=%s, messages=%d, tools=%s)",
+            params.model,
+            len(messages),
+            len(params.tools) if params.tools else 0,
+        )
 
         async with self._client.chat.create(
             model=params.model,
@@ -219,8 +229,19 @@ class VeniceConversationService:
             top_p=params.top_p,
             tools=params.tools or None,
             venice_parameters=params.venice_parameters,
+            stream_options={"include_usage": True},
         ) as stream:
             async for chunk in stream:
+                # Capture token usage emitted in the final chunk
+                # (requires stream_options.include_usage=True on the request).
+                if chunk.usage:
+                    result.usage = chunk.usage
+                    _LOGGER.debug(
+                        "[PERF] chat_stream — usage chunk received: prompt=%s completion=%s total=%s",
+                        chunk.usage.get("prompt_tokens"),
+                        chunk.usage.get("completion_tokens"),
+                        chunk.usage.get("total_tokens"),
+                    )
                 for choice in chunk.choices:
                     # The SDK may return choices as objects (with attributes) or
                     # as dicts depending on the SDK version. Support both.
@@ -286,13 +307,15 @@ class VeniceConversationService:
         result.tool_calls = [
             tool_calls_by_index[i] for i in sorted(tool_calls_by_index)
         ]
+        _total_elapsed = _time.monotonic() - _stream_open_t
         _LOGGER.debug(
-            "Streaming chat complete: %d chars, %d tool call(s), finish_reason=%r, "
-            "time_to_first_token=%.3fs",
+            "[PERF] chat_stream — complete: %d chars, %d tool call(s), finish_reason=%r, "
+            "time_to_first_token=%.3fs, total_elapsed=%.3fs",
             len(result.content),
             len(result.tool_calls),
             result.finish_reason,
             result.time_to_first_token or 0.0,
+            _total_elapsed,
         )
         return result
 

@@ -164,6 +164,8 @@ class ChatCompletionChunk:
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize chat completion chunk."""
         self.choices = data.get("choices", [])
+        # Populated in the final chunk when stream_options.include_usage=True
+        self.usage: dict[str, Any] | None = data.get("usage")
 
 
 class ChatCompletions:
@@ -188,6 +190,7 @@ class ChatCompletions:
         venice_parameters: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        stream_options: dict[str, Any] | None = None,
     ) -> AsyncGenerator[AsyncGenerator[ChatCompletionChunk, None], None]:
         """Create a streaming chat completion."""
         data: dict[str, Any] = {
@@ -207,6 +210,8 @@ class ChatCompletions:
             data["tools"] = tools
         if tool_choice is not None:
             data["tool_choice"] = tool_choice
+        if stream_options is not None:
+            data["stream_options"] = stream_options
 
         response: httpx.Response | None = None
         _connect_start = time.monotonic()

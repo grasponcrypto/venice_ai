@@ -662,10 +662,23 @@ class VeniceAIConversationEntity(ConversationEntity):
 
                 finish_reason = choice.get("finish_reason", "unknown")
                 _LOGGER.debug(
-                    "API call #%d finish_reason=%r",
+                    "[PERF] [+%.3fs] API call #%d finish_reason=%r",
+                    time.monotonic() - _turn_start,
                     iteration + 1,
                     finish_reason,
                 )
+
+                # Warn explicitly when the model was cut off by the token limit.
+                # This is the most common cause of empty or truncated responses.
+                if finish_reason == "length":
+                    _LOGGER.warning(
+                        "[PERF] API call #%d stopped due to max_tokens limit (%d). "
+                        "The response was TRUNCATED — increase Max Tokens in the integration options "
+                        "if responses are incomplete. Total elapsed: +%.3fs",
+                        iteration + 1,
+                        max_tokens,
+                        time.monotonic() - _turn_start,
+                    )
 
                 message = choice.get("message", {})
                 if not isinstance(message, dict):
@@ -682,16 +695,30 @@ class VeniceAIConversationEntity(ConversationEntity):
 
                 if not tool_calls:
                     _total_elapsed = time.monotonic() - _turn_start
-                    _LOGGER.debug(
-                        "[PERF] [+%.3fs] No tool calls — final response ready after %d API call(s). "
-                        "Total tokens this turn: prompt=%d, completion=%d (%.3fs total)",
-                        _total_elapsed,
-                        iteration + 1,
-                        _total_prompt_tokens,
-                        _total_completion_tokens,
-                        _total_elapsed,
-                    )
-                    assistant_response_content = text_content
+                    # When the model was cut off and returned no usable text,
+                    # surface a clear error rather than silently returning "".
+                    if finish_reason == "length" and not text_content.strip():
+                        _LOGGER.warning(
+                            "[PERF] [+%.3fs] finish_reason=length AND empty content — "
+                            "returning error message to user instead of blank response",
+                            _total_elapsed,
+                        )
+                        assistant_response_content = (
+                            "I'm sorry, my response was cut off because it exceeded the maximum "
+                            "token limit. Please try a shorter question or increase the Max Tokens "
+                            "setting in the Venice AI integration options."
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "[PERF] [+%.3fs] No tool calls — final response ready after %d API call(s). "
+                            "Total tokens this turn: prompt=%d, completion=%d (%.3fs total)",
+                            _total_elapsed,
+                            iteration + 1,
+                            _total_prompt_tokens,
+                            _total_completion_tokens,
+                            _total_elapsed,
+                        )
+                        assistant_response_content = text_content
                     break
 
                 # Store assistant message with tool call metadata encoded so
