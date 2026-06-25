@@ -842,12 +842,19 @@ class VeniceAIConversationEntity(ConversationEntity):
                         tool_result = {
                             "error": f"Tool {tool_name} arguments must be a JSON object",
                         }
-                        chat_log.content.append(
-                            ToolResultContent(
+                        try:
+                            _trc = ToolResultContent(
+                                agent_id=DOMAIN,
+                                tool_name=tool_name,
                                 tool_call_id=call_id,
                                 tool_result=tool_result,
                             )
-                        )
+                        except TypeError:
+                            _trc = ToolResultContent(
+                                tool_call_id=call_id,
+                                tool_result=tool_result,
+                            )
+                        chat_log.content.append(_trc)
                         continue
 
                     # Find matching tool and invoke via the public HA LLM API
@@ -856,15 +863,24 @@ class VeniceAIConversationEntity(ConversationEntity):
                     for tool in tools:
                         if tool.name == tool_name:
                             try:
-                                tool_input = llm.ToolInput(
-                                    tool_name=tool_name,
-                                    tool_args=tool_args,
-                                    platform=DOMAIN,
-                                    context=user_input.context,
-                                    user_prompt=user_input.text,
-                                    assistant=HOME_ASSISTANT_AGENT,
-                                    device_id=user_input.device_id,
-                                )
+                                # ToolInput signature varies across HA versions.
+                                # Try the full signature first (older HA); fall
+                                # back to the minimal form if kwargs are rejected.
+                                try:
+                                    tool_input = llm.ToolInput(
+                                        tool_name=tool_name,
+                                        tool_args=tool_args,
+                                        platform=DOMAIN,
+                                        context=user_input.context,
+                                        user_prompt=user_input.text,
+                                        assistant=HOME_ASSISTANT_AGENT,
+                                        device_id=user_input.device_id,
+                                    )
+                                except TypeError:
+                                    tool_input = llm.ToolInput(
+                                        tool_name=tool_name,
+                                        tool_args=tool_args,
+                                    )
                                 tool_result = await tool.async_call(self.hass, tool_input)
                                 _LOGGER.debug(
                                     "[PERF] [+%.3fs] HA tool %s returned in %.3fs: %s",
@@ -882,10 +898,21 @@ class VeniceAIConversationEntity(ConversationEntity):
                         _LOGGER.warning("Tool %s not found", tool_name)
                         tool_result = {"error": f"Tool {tool_name} not found"}
 
-                    tool_result_content = ToolResultContent(
-                        tool_call_id=call_id,
-                        tool_result=tool_result,
-                    )
+                    # ToolResultContent signature varies across HA versions:
+                    # - older HA: ToolResultContent(tool_call_id, tool_result)
+                    # - newer HA: ToolResultContent(agent_id, tool_name, tool_call_id, tool_result)
+                    try:
+                        tool_result_content = ToolResultContent(
+                            agent_id=DOMAIN,
+                            tool_name=tool_name,
+                            tool_call_id=call_id,
+                            tool_result=tool_result,
+                        )
+                    except TypeError:
+                        tool_result_content = ToolResultContent(
+                            tool_call_id=call_id,
+                            tool_result=tool_result,
+                        )
                     chat_log.content.append(tool_result_content)
 
                 # Trim chat log to prevent unbounded growth after processing all tool calls
