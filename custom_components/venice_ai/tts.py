@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime
 import logging
 import time
+from collections.abc import AsyncIterable
 from typing import Any
 
 from homeassistant.components.tts import (
@@ -240,13 +241,33 @@ class VeniceAITTS(TextToSpeechEntity):
             time.monotonic() - _tts_start,
         )
 
-        return TTSAudioResponse(
-            response_format,
-            self._client.speech.generate_streaming(
+        async def _timed_stream() -> AsyncIterable[bytes]:
+            """Wrap the Venice streaming generator with per-chunk timing logs."""
+            _first_chunk = True
+            _chunk_count = 0
+            _total_bytes = 0
+            async for chunk in self._client.speech.generate_streaming(
                 text=message,
                 voice=voice,
                 model=model,
                 audio_output=response_format,
                 speed=speed,
+            ):
+                if _first_chunk:
+                    _LOGGER.debug(
+                        "[PERF-TTS] [+%.3fs] First streaming audio chunk received — %d bytes",
+                        time.monotonic() - _tts_start,
+                        len(chunk),
+                    )
+                    _first_chunk = False
+                _chunk_count += 1
+                _total_bytes += len(chunk)
+                yield chunk
+            _LOGGER.debug(
+                "[PERF-TTS] [+%.3fs] Streaming TTS complete — %d chunks, %d bytes total",
+                time.monotonic() - _tts_start,
+                _chunk_count,
+                _total_bytes,
             )
-        )
+
+        return TTSAudioResponse(response_format, _timed_stream())
