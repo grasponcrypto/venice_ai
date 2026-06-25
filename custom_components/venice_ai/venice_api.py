@@ -122,6 +122,7 @@ class StreamingChatResult:
     content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str = "unknown"
+    time_to_first_token: float | None = None  # seconds from stream open to first content delta
 
     def as_message(self) -> dict[str, Any]:
         """Return an assistant ``message`` dict like the non-streaming API."""
@@ -204,9 +205,11 @@ class VeniceConversationService:
             A :class:`StreamingChatResult` with the fully accumulated content
             and any reconstructed tool calls.
         """
+        import time as _time
         result = StreamingChatResult()
         # Tool calls keyed by their streaming ``index`` for incremental merge.
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
+        _stream_open_t = _time.monotonic()
 
         async with self._client.chat.create(
             model=params.model,
@@ -252,6 +255,8 @@ class VeniceConversationService:
 
                     content_piece = delta.get("content") if isinstance(delta, dict) else None
                     if content_piece:
+                        if result.time_to_first_token is None:
+                            result.time_to_first_token = _time.monotonic() - _stream_open_t
                         result.content += content_piece
                         if on_delta is not None:
                             await _maybe_await(on_delta, content_piece)
@@ -282,10 +287,12 @@ class VeniceConversationService:
             tool_calls_by_index[i] for i in sorted(tool_calls_by_index)
         ]
         _LOGGER.debug(
-            "Streaming chat complete: %d chars, %d tool call(s), finish_reason=%r",
+            "Streaming chat complete: %d chars, %d tool call(s), finish_reason=%r, "
+            "time_to_first_token=%.3fs",
             len(result.content),
             len(result.tool_calls),
             result.finish_reason,
+            result.time_to_first_token or 0.0,
         )
         return result
 

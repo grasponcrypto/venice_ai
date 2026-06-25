@@ -537,6 +537,15 @@ class VeniceAIConversationEntity(ConversationEntity):
             _turn_start = time.monotonic()
             _total_prompt_tokens = 0
             _total_completion_tokens = 0
+            _LOGGER.debug(
+                "[PERF] [+0.000s] Turn received — conversation=%s, user_text=%d chars, "
+                "model=%s, stream=%s, tools=%d",
+                chat_log.conversation_id,
+                len(user_input.text),
+                model,
+                options.get(CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE),
+                len(venice_tools),
+            )
 
             for iteration in range(max_tool_iterations):
                 messages = _convert_chat_log_to_venice_messages(
@@ -569,10 +578,15 @@ class VeniceAIConversationEntity(ConversationEntity):
                     venice_parameters=venice_params,
                 )
 
+                _elapsed_so_far = time.monotonic() - _turn_start
+                if iteration == 0:
+                    _call_label = "Initial API call"
+                else:
+                    _call_label = f"API call after tool results (iteration {iteration + 1})"
                 _LOGGER.debug(
-                    "API call #%d/%d: messages=%d, tools_in_request=%d, stream=%s",
-                    iteration + 1,
-                    max_tool_iterations,
+                    "[PERF] [+%.3fs] %s → Venice AI: messages=%d, tools=%d, stream=%s",
+                    _elapsed_so_far,
+                    _call_label,
                     len(messages),
                     len(venice_tools),
                     stream_response,
@@ -585,6 +599,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     )
                     response_data = stream_result.as_response()
                 else:
+                    stream_result = None
                     response_data = await self._service.chat(messages, chat_params)
 
                 _iter_elapsed = time.monotonic() - _iter_start
@@ -603,6 +618,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     raise HomeAssistantError("Received invalid response")
 
                 # Log token usage if available in the response
+                _elapsed_after = time.monotonic() - _turn_start
                 usage = response_data.get("usage", {})
                 if usage:
                     prompt_tokens = usage.get("prompt_tokens", 0)
@@ -611,18 +627,27 @@ class VeniceAIConversationEntity(ConversationEntity):
                     _total_prompt_tokens += prompt_tokens
                     _total_completion_tokens += completion_tokens
                     _LOGGER.debug(
-                        "API call #%d token usage: prompt=%d, completion=%d, total=%d (%.2fs)",
-                        iteration + 1,
+                        "[PERF] [+%.3fs] Response from Venice AI (%s): %.3fs, "
+                        "tokens prompt=%d completion=%d total=%d%s",
+                        _elapsed_after,
+                        _call_label,
+                        _iter_elapsed,
                         prompt_tokens,
                         completion_tokens,
                         total_tokens,
-                        _iter_elapsed,
+                        f", first_token=+{stream_result.time_to_first_token:.3f}s"
+                        if stream_result and stream_result.time_to_first_token is not None
+                        else "",
                     )
                 else:
                     _LOGGER.debug(
-                        "API call #%d completed in %.2fs (no token usage in response)",
-                        iteration + 1,
+                        "[PERF] [+%.3fs] Response from Venice AI (%s): %.3fs%s",
+                        _elapsed_after,
+                        _call_label,
                         _iter_elapsed,
+                        f", first_token=+{stream_result.time_to_first_token:.3f}s"
+                        if stream_result and stream_result.time_to_first_token is not None
+                        else "",
                     )
 
                 choice = response_data["choices"][0]
@@ -654,13 +679,15 @@ class VeniceAIConversationEntity(ConversationEntity):
                 tool_calls = message.get("tool_calls", [])
 
                 if not tool_calls:
+                    _total_elapsed = time.monotonic() - _turn_start
                     _LOGGER.debug(
-                        "No tool calls in response — breaking after %d API call(s). "
-                        "Total tokens this turn: prompt=%d, completion=%d (%.2fs total)",
+                        "[PERF] [+%.3fs] No tool calls — final response ready after %d API call(s). "
+                        "Total tokens this turn: prompt=%d, completion=%d (%.3fs total)",
+                        _total_elapsed,
                         iteration + 1,
                         _total_prompt_tokens,
                         _total_completion_tokens,
-                        time.monotonic() - _turn_start,
+                        _total_elapsed,
                     )
                     assistant_response_content = text_content
                     break
@@ -679,8 +706,8 @@ class VeniceAIConversationEntity(ConversationEntity):
                 chat_log.content.append(assistant_content)
 
                 _LOGGER.debug(
-                    "API call #%d returned %d tool call(s): %s",
-                    iteration + 1,
+                    "[PERF] [+%.3fs] Tool call(s) requested (%d): %s — dispatching now",
+                    time.monotonic() - _turn_start,
                     len(tool_calls),
                     [tc.get("function", {}).get("name") for tc in tool_calls],
                 )
@@ -700,7 +727,8 @@ class VeniceAIConversationEntity(ConversationEntity):
                         continue
 
                     _LOGGER.debug(
-                        "Executing tool: %s, args: %s",
+                        "[PERF] [+%.3fs] Calling HA tool: %s, args: %s",
+                        time.monotonic() - _turn_start,
                         tool_name,
                         tool_args_str,
                     )
@@ -752,7 +780,8 @@ class VeniceAIConversationEntity(ConversationEntity):
                                 )
                                 tool_result = await tool.async_call(self.hass, tool_input)
                                 _LOGGER.debug(
-                                    "Tool %s succeeded in %.2fs: %s",
+                                    "[PERF] [+%.3fs] HA tool %s returned in %.3fs: %s",
+                                    time.monotonic() - _turn_start,
                                     tool_name,
                                     time.monotonic() - _tool_start,
                                     tool_result,
@@ -839,9 +868,12 @@ class VeniceAIConversationEntity(ConversationEntity):
         # entity card and automations can see recent activity.
         self._last_conversation_id = chat_log.conversation_id
         intent_response = intent.IntentResponse(language=user_input.language)
+        _total_turn_elapsed = time.monotonic() - _turn_start
         intent_response.async_set_speech(assistant_response_content)
         _LOGGER.debug(
-            "Conversation %s completed (%d messages in log). Response text (%d chars): %r",
+            "[PERF] [+%.3fs] Response dispatched to user — conversation=%s, "
+            "%d messages in log, response=%d chars: %r",
+            _total_turn_elapsed,
             chat_log.conversation_id,
             len(chat_log.content),
             len(assistant_response_content),

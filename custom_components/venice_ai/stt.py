@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+import time
 from collections.abc import AsyncIterable
 
 from homeassistant.components import stt
@@ -151,6 +152,9 @@ class VeniceAISTT(SpeechToTextEntity):
                 return stt.SpeechResult("", stt.SpeechResultState.ERROR)
 
         try:
+            _stt_start = time.monotonic()
+            _LOGGER.debug("[PERF-STT] [+0.000s] Audio stream received — buffering audio")
+
             # Read all data from the stream using bytearray for efficiency
             audio_data = bytearray()
             async for chunk in stream:
@@ -161,6 +165,13 @@ class VeniceAISTT(SpeechToTextEntity):
                         MAX_STT_BUFFER_SIZE,
                     )
                     return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+
+            _buffered_t = time.monotonic() - _stt_start
+            _LOGGER.debug(
+                "[PERF-STT] [+%.3fs] Audio buffering complete — %d bytes received",
+                _buffered_t,
+                len(audio_data),
+            )
 
             # Handle empty audio streams gracefully
             if len(audio_data) == 0:
@@ -177,7 +188,8 @@ class VeniceAISTT(SpeechToTextEntity):
             )
 
             _LOGGER.debug(
-                "Processing audio stream (%d bytes) with model=%s, format=%s, timestamps=%s",
+                "[PERF-STT] [+%.3fs] Processing audio (%d bytes) with model=%s, format=%s, timestamps=%s",
+                time.monotonic() - _stt_start,
                 len(audio_data),
                 model,
                 response_format,
@@ -186,9 +198,21 @@ class VeniceAISTT(SpeechToTextEntity):
 
             # Convert PCM data to WAV format since Venice AI expects proper WAV files
             wav_data = _pcm_to_wav(bytes(audio_data), sample_rate=16000, num_channels=1, bits_per_sample=16)
-            _LOGGER.debug("Converted PCM to WAV (%d bytes -> %d bytes)", len(audio_data), len(wav_data))
+            _LOGGER.debug(
+                "[PERF-STT] [+%.3fs] PCM→WAV conversion done (%d → %d bytes)",
+                time.monotonic() - _stt_start,
+                len(audio_data),
+                len(wav_data),
+            )
 
             client: AsyncVeniceAIClient = self.entry.runtime_data.client
+
+            _LOGGER.debug(
+                "[PERF-STT] [+%.3fs] Sending to Venice AI transcription API (model=%s)",
+                time.monotonic() - _stt_start,
+                model,
+            )
+            _api_start = time.monotonic()
 
             result = await client.transcriptions.create(
                 audio_data=wav_data,
@@ -197,8 +221,16 @@ class VeniceAISTT(SpeechToTextEntity):
                 timestamps=timestamps,
             )
 
+            _api_elapsed = time.monotonic() - _api_start
+            _total_elapsed = time.monotonic() - _stt_start
             text = result.get("text", "")
-            _LOGGER.debug("Transcription result: %s", text)
+            _LOGGER.debug(
+                "[PERF-STT] [+%.3fs] Transcription received in %.3fs — %d chars: %r",
+                _total_elapsed,
+                _api_elapsed,
+                len(text),
+                text[:100] if text else "<empty>",
+            )
 
             return stt.SpeechResult(text, stt.SpeechResultState.SUCCESS)
 

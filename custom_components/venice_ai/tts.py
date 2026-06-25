@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.tts import (
@@ -123,11 +124,18 @@ class VeniceAITTS(TextToSpeechEntity):
         )
         speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
-        _LOGGER.debug("Generating TTS for message: %s", message)
+        _tts_start = time.monotonic()
         _LOGGER.debug(
-            "TTS options: voice=%s, model=%s, format=%s, speed=%s",
-            voice, model, response_format, speed
+            "[PERF-TTS] [+0.000s] TTS request — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
+            len(message),
+            voice, model, response_format, speed,
         )
+
+        _LOGGER.debug(
+            "[PERF-TTS] [+%.3fs] Sending to Venice AI speech API",
+            time.monotonic() - _tts_start,
+        )
+        _api_start = time.monotonic()
 
         audio_data = await self._client.speech.generate(
             text=message,
@@ -136,9 +144,14 @@ class VeniceAITTS(TextToSpeechEntity):
             audio_output=response_format,
             speed=speed,
         )
+
+        _api_elapsed = time.monotonic() - _api_start
+        _total_elapsed = time.monotonic() - _tts_start
         _LOGGER.debug(
-            "Received raw audio data from API: %d bytes",
-            len(audio_data) if audio_data else 0
+            "[PERF-TTS] [+%.3fs] Audio received from Venice AI in %.3fs — %d bytes",
+            _total_elapsed,
+            _api_elapsed,
+            len(audio_data) if audio_data else 0,
         )
 
         if not audio_data:
@@ -206,14 +219,20 @@ class VeniceAITTS(TextToSpeechEntity):
         )
         speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
-        _LOGGER.debug("Streaming TTS for message: %s", message)
+        _tts_start = time.monotonic()
         _LOGGER.debug(
-            "Streaming TTS options: voice=%s, model=%s, format=%s, speed=%s",
-            voice, model, response_format, speed
+            "[PERF-TTS] [+0.000s] Streaming TTS request — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
+            len(message),
+            voice, model, response_format, speed,
         )
 
         if not message:
             raise HomeAssistantError(f"No TTS message for {self.entity_id}")
+
+        _LOGGER.debug(
+            "[PERF-TTS] [+%.3fs] Opening streaming speech connection to Venice AI",
+            time.monotonic() - _tts_start,
+        )
 
         return TTSAudioResponse(
             response_format,
