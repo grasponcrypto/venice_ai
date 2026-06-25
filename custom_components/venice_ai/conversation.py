@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import time
@@ -538,8 +539,9 @@ class VeniceAIConversationEntity(ConversationEntity):
             _total_prompt_tokens = 0
             _total_completion_tokens = 0
             _LOGGER.debug(
-                "[PERF] [+0.000s] Turn received — conversation=%s, user_text=%d chars, "
+                "[PERF] [+0.000s] Turn received at %s — conversation=%s, user_text=%d chars, "
                 "model=%s, stream=%s, tools=%d",
+                datetime.datetime.now().isoformat(timespec="milliseconds"),
                 chat_log.conversation_id,
                 len(user_input.text),
                 model,

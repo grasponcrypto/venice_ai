@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import struct
 import time
@@ -153,7 +154,10 @@ class VeniceAISTT(SpeechToTextEntity):
 
         try:
             _stt_start = time.monotonic()
-            _LOGGER.debug("[PERF-STT] [+0.000s] Audio stream received — buffering audio")
+            _LOGGER.debug(
+                "[PERF-STT] [+0.000s] Audio stream received at %s — buffering audio",
+                datetime.datetime.now().isoformat(timespec="milliseconds"),
+            )
 
             # Read all data from the stream using bytearray for efficiency
             audio_data = bytearray()

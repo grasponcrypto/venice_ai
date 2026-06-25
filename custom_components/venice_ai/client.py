@@ -209,6 +209,8 @@ class ChatCompletions:
             data["tool_choice"] = tool_choice
 
         response: httpx.Response | None = None
+        _connect_start = time.monotonic()
+        _LOGGER.debug("[PERF-HTTP] POST /chat/completions (stream) — opening connection")
         try:
             request = self.client._http_client.build_request(
                 "POST",
@@ -219,6 +221,11 @@ class ChatCompletions:
             )
             response = await self.client._http_client.send(request, stream=True)
             response.raise_for_status()
+            _LOGGER.debug(
+                "[PERF-HTTP] POST /chat/completions (stream) → HTTP %d, connection established in %.3fs",
+                response.status_code,
+                time.monotonic() - _connect_start,
+            )
 
         except httpx.HTTPStatusError as err:
             if response is not None:
@@ -237,6 +244,8 @@ class ChatCompletions:
             raise NetworkError(f"Request error (streaming chat): {err}") from err
 
         async def _stream() -> AsyncGenerator[ChatCompletionChunk, None]:
+            _chunk_count = 0
+            _stream_start = time.monotonic()
             try:
                 async for line in response.aiter_lines():
                     if not line or line == "data: [DONE]":
@@ -244,11 +253,17 @@ class ChatCompletions:
                     if line.startswith("data: "):
                         try:
                             chunk_data = json.loads(line[6:])
+                            _chunk_count += 1
                             yield ChatCompletionChunk(chunk_data)
                         except json.JSONDecodeError:
                             _LOGGER.warning("Failed to decode stream chunk: %s", line)
                     else:
                         _LOGGER.warning("Received unexpected line in stream: %s", line)
+                _LOGGER.debug(
+                    "[PERF-HTTP] POST /chat/completions stream finished — %d chunks in %.3fs",
+                    _chunk_count,
+                    time.monotonic() - _stream_start,
+                )
             except httpx.TransportError as err:
                 # Convert mid-stream transport failures (connection reset, server close,
                 # timeout) to a typed NetworkError so callers get consistent exceptions.
@@ -433,6 +448,11 @@ class Speech:
             "Authorization": f"Bearer {self.client._api_key}",
         }
 
+        _gen_start = time.monotonic()
+        _LOGGER.debug(
+            "[PERF-HTTP] POST /audio/speech (non-streaming) — model=%s, voice=%s, format=%s, text=%d chars",
+            model, voice, audio_output, len(text),
+        )
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
@@ -443,7 +463,12 @@ class Speech:
             )
             response.raise_for_status()
             audio_data = response.content
-            _LOGGER.debug("Received raw audio data: %d bytes", len(audio_data))
+            _gen_elapsed = time.monotonic() - _gen_start
+            _bytes_per_sec = len(audio_data) / _gen_elapsed if _gen_elapsed > 0 else 0.0
+            _LOGGER.debug(
+                "[PERF-HTTP] POST /audio/speech (non-streaming) — complete: %d bytes in %.3fs (%.0f bytes/s)",
+                len(audio_data), _gen_elapsed, _bytes_per_sec,
+            )
             return audio_data
 
         except httpx.HTTPStatusError as err:
@@ -494,10 +519,28 @@ class Speech:
             )
             response.raise_for_status()
 
-            _LOGGER.debug("Streaming TTS response received, yielding chunks")
+            _tts_stream_start = time.monotonic()
+            _tts_first_chunk_t: float | None = None
+            _tts_chunk_count = 0
+            _tts_total_bytes = 0
+            _LOGGER.debug("[PERF-HTTP] POST /audio/speech (stream) — connection established, streaming chunks")
             try:
                 async for chunk in response.aiter_bytes():
+                    if _tts_first_chunk_t is None:
+                        _tts_first_chunk_t = time.monotonic() - _tts_stream_start
+                        _LOGGER.debug(
+                            "[PERF-HTTP] POST /audio/speech (stream) — first audio chunk received in %.3fs",
+                            _tts_first_chunk_t,
+                        )
+                    _tts_chunk_count += 1
+                    _tts_total_bytes += len(chunk)
                     yield chunk
+                _LOGGER.debug(
+                    "[PERF-HTTP] POST /audio/speech (stream) — complete: %d chunks, %d bytes total in %.3fs",
+                    _tts_chunk_count,
+                    _tts_total_bytes,
+                    time.monotonic() - _tts_stream_start,
+                )
             except httpx.TransportError as err:
                 _LOGGER.error("Streaming TTS transport error: %s", err)
                 raise NetworkError(f"Streaming TTS interrupted: {err}") from err
@@ -547,6 +590,11 @@ class Transcriptions:
             "Authorization": f"Bearer {self.client._api_key}",
         }
 
+        _stt_start = time.monotonic()
+        _LOGGER.debug(
+            "[PERF-HTTP] POST /audio/transcriptions — model=%s, format=%s, audio=%d bytes",
+            model, response_format, len(audio_data),
+        )
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
@@ -557,6 +605,11 @@ class Transcriptions:
                 timeout=DEFAULT_STT_TIMEOUT,
             )
             response.raise_for_status()
+            _stt_elapsed = time.monotonic() - _stt_start
+            _LOGGER.debug(
+                "[PERF-HTTP] POST /audio/transcriptions — complete in %.3fs (HTTP %d)",
+                _stt_elapsed, response.status_code,
+            )
             if response_format == "json":
                 return response.json()
             else:
@@ -683,10 +736,20 @@ class AsyncVeniceAIClient:
         """
         retryable_statuses = {429, 500, 502, 503}
         url = f"{self._base_url}{endpoint}"
+        _req_start = time.monotonic()
 
         for attempt in range(MAX_RETRIES + 1):
+            _attempt_start = time.monotonic()
+            if attempt == 0:
+                _LOGGER.debug("[PERF-HTTP] %s %s — sending request", method, endpoint)
+            else:
+                _LOGGER.debug(
+                    "[PERF-HTTP] %s %s — retry attempt %d/%d",
+                    method, endpoint, attempt + 1, MAX_RETRIES + 1,
+                )
             try:
                 response = await self._http_client.request(method, url, **kwargs)
+                _attempt_elapsed = time.monotonic() - _attempt_start
 
                 if response.status_code in retryable_statuses:
                     if attempt < MAX_RETRIES:
@@ -697,23 +760,37 @@ class AsyncVeniceAIClient:
                             pass
                         delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
                         _LOGGER.warning(
-                            "Venice AI API returned HTTP %d, retrying in %.1fs (attempt %d/%d)",
-                            response.status_code, delay, attempt + 1, MAX_RETRIES,
+                            "[PERF-HTTP] %s %s → HTTP %d in %.3fs; retrying in %.1fs (attempt %d/%d)",
+                            method, endpoint, response.status_code, _attempt_elapsed,
+                            delay, attempt + 1, MAX_RETRIES,
                         )
                         await asyncio.sleep(delay)
                         continue
 
+                _LOGGER.debug(
+                    "[PERF-HTTP] %s %s → HTTP %d in %.3fs%s",
+                    method, endpoint, response.status_code, _attempt_elapsed,
+                    f" ({attempt} retr{'y' if attempt == 1 else 'ies'}, {time.monotonic() - _req_start:.3f}s total)"
+                    if attempt > 0 else "",
+                )
                 return response
 
             except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as err:
+                _attempt_elapsed = time.monotonic() - _attempt_start
                 if attempt < MAX_RETRIES:
                     delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
                     _LOGGER.warning(
-                        "Venice AI API request error (%s), retrying in %.1fs (attempt %d/%d)",
-                        type(err).__name__, delay, attempt + 1, MAX_RETRIES,
+                        "[PERF-HTTP] %s %s → %s after %.3fs; retrying in %.1fs (attempt %d/%d)",
+                        method, endpoint, type(err).__name__, _attempt_elapsed,
+                        delay, attempt + 1, MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
                 else:
+                    _LOGGER.warning(
+                        "[PERF-HTTP] %s %s → %s after %.3fs; max retries exhausted (%.3fs total)",
+                        method, endpoint, type(err).__name__, _attempt_elapsed,
+                        time.monotonic() - _req_start,
+                    )
                     raise NetworkError(f"Max retries exceeded: {err}") from err
 
         # Should never reach here; all retry attempts exhausted

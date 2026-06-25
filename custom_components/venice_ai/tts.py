@@ -1,6 +1,7 @@
 """Venice AI TTS platform."""
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 from typing import Any
@@ -126,13 +127,14 @@ class VeniceAITTS(TextToSpeechEntity):
 
         _tts_start = time.monotonic()
         _LOGGER.debug(
-            "[PERF-TTS] [+0.000s] TTS request — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
+            "[PERF-TTS] [+0.000s] TTS request at %s — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
+            datetime.datetime.now().isoformat(timespec="milliseconds"),
             len(message),
             voice, model, response_format, speed,
         )
 
         _LOGGER.debug(
-            "[PERF-TTS] [+%.3fs] Sending to Venice AI speech API",
+            "[PERF-TTS] [+%.3fs] Sending to Venice AI speech API (non-streaming)",
             time.monotonic() - _tts_start,
         )
         _api_start = time.monotonic()
@@ -147,11 +149,14 @@ class VeniceAITTS(TextToSpeechEntity):
 
         _api_elapsed = time.monotonic() - _api_start
         _total_elapsed = time.monotonic() - _tts_start
+        _audio_bytes = len(audio_data) if audio_data else 0
+        _bytes_per_sec = _audio_bytes / _api_elapsed if _api_elapsed > 0 else 0.0
         _LOGGER.debug(
-            "[PERF-TTS] [+%.3fs] Audio received from Venice AI in %.3fs — %d bytes",
+            "[PERF-TTS] [+%.3fs] Audio received from Venice AI in %.3fs — %d bytes (%.0f bytes/s)",
             _total_elapsed,
             _api_elapsed,
-            len(audio_data) if audio_data else 0,
+            _audio_bytes,
+            _bytes_per_sec,
         )
 
         if not audio_data:
@@ -221,7 +226,8 @@ class VeniceAITTS(TextToSpeechEntity):
 
         _tts_start = time.monotonic()
         _LOGGER.debug(
-            "[PERF-TTS] [+0.000s] Streaming TTS request — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
+            "[PERF-TTS] [+0.000s] Streaming TTS request at %s — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
+            datetime.datetime.now().isoformat(timespec="milliseconds"),
             len(message),
             voice, model, response_format, speed,
         )
