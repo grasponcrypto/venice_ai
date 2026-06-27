@@ -14,6 +14,7 @@ from homeassistant.components.conversation import (
     HOME_ASSISTANT_AGENT,
     MATCH_ALL,
     ConversationEntity,
+    ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
     ChatLog,
@@ -308,6 +309,11 @@ class VeniceAIConversationEntity(ConversationEntity):
         self._service = VeniceConversationService(self._client)
         self._attr_unique_id = f"{entry.entry_id}_conversation"
         self._attr_name = entry.title
+        # Advertise CONTROL when a Home Assistant LLM API is configured so the
+        # frontend stops showing "this assistant cannot control your home" and
+        # the assist pipeline treats this agent as control-capable.
+        if entry.options.get(CONF_LLM_HASS_API):
+            self._attr_supported_features = ConversationEntityFeature.CONTROL
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
