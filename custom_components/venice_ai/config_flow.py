@@ -488,8 +488,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         ``async_get_apis`` exists but returns an empty iterable (e.g. on some
         HA versions) we still fall back to probing known API IDs directly.
         """
-        none_option = SelectOptionDict(label="None (disabled)", value="")
-        api_options: list[SelectOptionDict] = [none_option]
+        # The control field is a multiple-select, so an explicit "None" entry is
+        # not needed — an empty selection disables control.
+        api_options: list[SelectOptionDict] = []
 
         # Method 1: async_get_apis (HA ≥ 2024.x – returns API objects with .id/.name)
         if hasattr(llm, "async_get_apis"):
@@ -501,7 +502,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     )
                 _LOGGER.debug("Found %d LLM API(s) via async_get_apis", len(apis))
                 # Only return if we actually discovered something; otherwise fall through.
-                if len(api_options) > 1:
+                if api_options:
                     return api_options
             except Exception as err:
                 _LOGGER.debug("async_get_apis failed: %s", err)
@@ -522,7 +523,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     _LOGGER.debug(
                         "Found %d LLM API(s) via async_get_api_list", len(api_ids)
                     )
-                    if len(api_options) > 1:
+                    if api_options:
                         return api_options
             except Exception as err:
                 _LOGGER.debug("async_get_api_list failed: %s", err)
@@ -641,12 +642,13 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 ),
                 vol.Optional(
                     CONF_LLM_HASS_API,
-                    default="assist",  # Default to "assist" for HA control
+                    default=["assist"],  # Default to "assist" for HA control
                 ): SelectSelector(
                     SelectSelectorConfig(
                         options=llm_api_options,
                         mode=SelectSelectorMode.DROPDOWN,
-                        sort=False,  # Keep "None" first
+                        multiple=True,  # allow enabling several APIs at once
+                        sort=False,
                     )
                 ),
                 vol.Optional(CONF_STRIP_THINKING_RESPONSE): BooleanSelector(),
@@ -795,7 +797,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
             CONF_TOP_P: RECOMMENDED_TOP_P,
             CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
-            CONF_LLM_HASS_API: "assist",  # Default to "assist" for HA control
+            CONF_LLM_HASS_API: ["assist"],  # Default to "assist" for HA control
             CONF_STRIP_THINKING_RESPONSE: RECOMMENDED_STRIP_THINKING_RESPONSE,
             CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
             CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
@@ -812,6 +814,12 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         # add_suggested_values_to_schema, but they are used by
         # _resolve_combined_tts_value below.
         suggested_values.update(self.config_entry.options)
+        # The control field is now a multiple-select. Installs created with the
+        # earlier single-select stored it as a plain string; coerce to a list so
+        # the widget pre-selects it correctly (and an empty string -> []).
+        _llm_val = suggested_values.get(CONF_LLM_HASS_API)
+        if isinstance(_llm_val, str):
+            suggested_values[CONF_LLM_HASS_API] = [_llm_val] if _llm_val else []
         if user_input is not None:
             suggested_values.update(user_input)
 
