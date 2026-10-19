@@ -235,6 +235,48 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
         return {"type": "object", "properties": {}}
 
 
+def _tool_result_data(result: Any) -> Any:
+    """Return the JSON payload of a tool result (ToolResult on HA >= 2026.10)."""
+    return getattr(result, "data", result)
+
+
+def _make_tool_result_content(
+    tool_name: str, call_id: str, result: Any
+) -> ToolResultContent:
+    """Build ToolResultContent across HA versions.
+
+    - HA >= 2026.10: ToolResultContent(agent_id, tool_call_id, tool_name,
+      result=llm.ToolResult(data, error))
+    - older HA: ToolResultContent(agent_id, tool_name, tool_call_id, tool_result)
+      or ToolResultContent(tool_call_id, tool_result)
+    """
+    data = _tool_result_data(result)
+    tool_result_cls = getattr(llm, "ToolResult", None)
+    if tool_result_cls is not None:
+        if not isinstance(result, tool_result_cls):
+            result = tool_result_cls(
+                data=data, error=isinstance(data, dict) and "error" in data
+            )
+        try:
+            return ToolResultContent(
+                agent_id=DOMAIN,
+                tool_name=tool_name,
+                tool_call_id=call_id,
+                result=result,
+            )
+        except TypeError:
+            pass
+    try:
+        return ToolResultContent(
+            agent_id=DOMAIN,
+            tool_name=tool_name,
+            tool_call_id=call_id,
+            tool_result=data,
+        )
+    except TypeError:
+        return ToolResultContent(tool_call_id=call_id, tool_result=data)
+
+
 def _convert_chat_log_to_venice_messages(
     chat_log: ChatLog,
     system_prompt: str,
@@ -268,7 +310,11 @@ def _convert_chat_log_to_venice_messages(
             messages.append({
                 "role": "tool",
                 "tool_call_id": msg.tool_call_id,
-                "content": json.dumps(msg.tool_result),
+                "content": json.dumps(
+                    _tool_result_data(getattr(msg, "result", None))
+                    if hasattr(msg, "result")
+                    else msg.tool_result
+                ),
             })
         elif isinstance(msg, SystemContent):
             messages.append({"role": "system", "content": msg.content})
@@ -879,19 +925,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                         tool_result = {
                             "error": f"Tool {tool_name} arguments must be a JSON object",
                         }
-                        try:
-                            _trc = ToolResultContent(
-                                agent_id=DOMAIN,
-                                tool_name=tool_name,
-                                tool_call_id=call_id,
-                                tool_result=tool_result,
-                            )
-                        except TypeError:
-                            _trc = ToolResultContent(
-                                tool_call_id=call_id,
-                                tool_result=tool_result,
-                            )
-                        chat_log.content.append(_trc)
+                        chat_log.content.append(
+                            _make_tool_result_content(tool_name, call_id, tool_result)
+                        )
                         continue
 
                     # Find matching tool and invoke via the public HA LLM API
@@ -956,22 +992,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                             )
                         }
 
-                    # ToolResultContent signature varies across HA versions:
-                    # - older HA: ToolResultContent(tool_call_id, tool_result)
-                    # - newer HA: ToolResultContent(agent_id, tool_name, tool_call_id, tool_result)
-                    try:
-                        tool_result_content = ToolResultContent(
-                            agent_id=DOMAIN,
-                            tool_name=tool_name,
-                            tool_call_id=call_id,
-                            tool_result=tool_result,
-                        )
-                    except TypeError:
-                        tool_result_content = ToolResultContent(
-                            tool_call_id=call_id,
-                            tool_result=tool_result,
-                        )
-                    chat_log.content.append(tool_result_content)
+                    chat_log.content.append(
+                        _make_tool_result_content(tool_name, call_id, tool_result)
+                    )
 
                 # Trim chat log to prevent unbounded growth after processing all tool calls
                 _trim_chat_log(chat_log)
