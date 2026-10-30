@@ -127,12 +127,21 @@
         },
       "entity_not_found": {
         "message": "Venice AI Task entity not found for config entry {entry_id}."
+      },
+      "image_models_unavailable": {
+        "message": "Image models are not available yet. Reload the Venice AI integration and try again."
+      },
+      "unknown_image_model": {
+        "message": "{model} is not an available Venice image model. Use an id from the image catalog, not a video model or \"default\"."
+      },
+      "invalid_image_request": {
+        "message": "{reason}"
       }
     },
     "services": {
         "generate_image": {
             "name": "Generate Image",
-            "description": "Generate an image using Venice AI.",
+            "description": "Generate an image with a Venice image model. Returns base64 webp, not a URL.",
             "fields": {
                 "config_entry": {
                     "name": "Config Entry",
@@ -142,17 +151,25 @@
                     "name": "Prompt",
                     "description": "Image description"
                 },
-                "size": {
-                    "name": "Size",
-                    "description": "Image size"
+                "model": {
+                    "name": "Model",
+                    "description": "Image model id from the Venice image catalog. Not a video model, and not \"default\"."
                 },
-                "quality": {
-                    "name": "Quality",
-                    "description": "Image quality"
+                "aspect_ratio": {
+                    "name": "Aspect ratio",
+                    "description": "Aspect ratio this model lists, such as 1:1 or 16:9. Models that do not list aspect ratios reject this field."
                 },
-                "style": {
-                    "name": "Style",
-                    "description": "Image style"
+                "resolution": {
+                    "name": "Resolution",
+                    "description": "Resolution this model lists, such as 1K or 2K. Models that do not list resolutions reject this field."
+                },
+                "width": {
+                    "name": "Width",
+                    "description": "Pixel width from 1 to 1280. Set with height, and only for models that size by pixels."
+                },
+                "height": {
+                    "name": "Height",
+                    "description": "Pixel height from 1 to 1280. Set with width, and only for models that size by pixels."
                 }
             }
         },

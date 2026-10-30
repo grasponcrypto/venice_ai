@@ -75,6 +75,7 @@ async def async_get_config_entry_diagnostics(
         coordinator_data = coordinator.data or {}
         text_models = coordinator_data.get("text_models", [])
         audio_models = coordinator_data.get("audio_models", [])
+        image_models = coordinator_data.get("image_models", [])
         voices = coordinator_data.get("voices", [])
 
         diagnostics["coordinator"] = {
@@ -85,6 +86,7 @@ async def async_get_config_entry_diagnostics(
             else None,
             "text_models_count": len(text_models),
             "audio_models_count": len(audio_models),
+            "image_models_count": len(image_models),
             "voices_count": len(voices),
         }
     else:
