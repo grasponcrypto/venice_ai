@@ -33,6 +33,14 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   `const.py` so they can be tuned without touching `client.py`.
 
 ### Fixed
+- **HA 2026.10 tool calls:** every tool call failed with
+  `TypeError: ToolResultContent.__init__() got an unexpected keyword
+  argument 'tool_result'`, surfacing as "Unexpected error during
+  conversation processing", because HA 2026.10 replaced the
+  `tool_result` init field with `result: llm.ToolResult`. Tool results
+  are now built by `_make_tool_result_content`, which uses `result=` on
+  2026.10+ and falls back to both older signatures; chat-log conversion
+  reads `result.data` instead of the deprecated `tool_result` property.
 - **MED-3:** Conversation streaming flag (`CONF_STREAM_RESPONSE`)
   honoured by the conversation entity; opt-in default off.
 - **SEC-1 (regression):** `_sanitize_header_value` in `client.py`
