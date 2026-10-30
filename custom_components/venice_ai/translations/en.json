@@ -55,6 +55,28 @@
             "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
         }
     },
+    "entity": {
+        "sensor": {
+            "request_count": {
+                "name": "API requests"
+            },
+            "error_count": {
+                "name": "API errors"
+            },
+            "total_tokens": {
+                "name": "Total tokens"
+            },
+            "prompt_tokens": {
+                "name": "Prompt tokens"
+            },
+            "completion_tokens": {
+                "name": "Completion tokens"
+            },
+            "last_error": {
+                "name": "Last error"
+            }
+        }
+    },
     "issues": {
         "deprecated_model": {
             "title": "Deprecated Venice AI model",
