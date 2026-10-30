@@ -663,8 +663,141 @@ class Transcriptions:
             raise VeniceAIError("Failed to decode transcriptions API response") from err
 
 
+IMAGE_GENERATE_FORMAT = "webp"
+IMAGE_MIN_EDGE = 1
+IMAGE_MAX_EDGE = 1280
+
+
+class ImageGenerateError(ValueError):
+    """Caller input rejected before POST /image/generate."""
+
+
+def _constraint_choices(value: Any) -> list[str]:
+    """Return non-empty strings from a model constraint list."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _positive_int(value: Any) -> int | None:
+    """Return a positive int, or None if the value is not a whole number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    number = int(value)
+    if number <= 0:
+        return None
+    return number
+
+
+def image_model_constraints(model: dict[str, Any]) -> dict[str, Any]:
+    """Return the constraints object for one catalog model, or {}."""
+    spec = model.get("model_spec") or model.get("modelSpec") or {}
+    if not isinstance(spec, dict):
+        return {}
+    constraints = spec.get("constraints") or {}
+    if not isinstance(constraints, dict):
+        return {}
+    return constraints
+
+
+def find_image_model(
+    models: list[Any],
+    model_id: str,
+) -> dict[str, Any] | None:
+    """Find a type=image catalog entry by id.
+
+    Entries with no type are accepted, because the list is already
+    fetched with ``?type=image``. Video and other types are skipped.
+    """
+    for model in models:
+        if not isinstance(model, dict) or model.get("id") != model_id:
+            continue
+        model_type = model.get("type")
+        if model_type not in (None, "", "image"):
+            continue
+        return model
+    return None
+
+
+def _check_edge(name: str, value: Any, divisor: int) -> None:
+    """Reject a pixel edge the native image API would answer 400 for."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ImageGenerateError(f"{name} must be a whole number.")
+    if value < IMAGE_MIN_EDGE or value > IMAGE_MAX_EDGE:
+        raise ImageGenerateError(
+            f"{name} must be between {IMAGE_MIN_EDGE} and {IMAGE_MAX_EDGE}."
+        )
+    if value % divisor != 0:
+        raise ImageGenerateError(f"{name} must be divisible by {divisor}.")
+
+
+def image_generate_options(
+    constraints: dict[str, Any] | None,
+    prompt: str,
+    *,
+    aspect_ratio: str | None = None,
+    resolution: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+) -> dict[str, Any]:
+    """Build the native image fields this model will accept.
+
+    Width and height are included only for models that size by pixels
+    (a width/height divisor, and no aspect-ratio or resolution list).
+    Aspect ratio and resolution are included only when that list exists
+    and the value is in it. Anything else raises ImageGenerateError so
+    Venice is not asked for a size it will reject with HTTP 400.
+    """
+    spec = constraints if isinstance(constraints, dict) else {}
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ImageGenerateError("Prompt is required.")
+    limit = _positive_int(spec.get("promptCharacterLimit"))
+    if limit is not None and len(prompt) > limit:
+        raise ImageGenerateError(
+            f"Prompt is {len(prompt)} characters; this model allows {limit}."
+        )
+
+    aspects = _constraint_choices(spec.get("aspectRatios"))
+    resolutions = _constraint_choices(spec.get("resolutions"))
+    divisor = _positive_int(spec.get("widthHeightDivisor"))
+    uses_pixels = divisor is not None and not aspects and not resolutions
+
+    options: dict[str, Any] = {
+        "prompt": prompt,
+        "format": IMAGE_GENERATE_FORMAT,
+    }
+    if aspect_ratio is not None:
+        if not aspects:
+            raise ImageGenerateError("This model does not accept aspect_ratio.")
+        if aspect_ratio not in aspects:
+            joined = ", ".join(aspects)
+            raise ImageGenerateError(f"aspect_ratio must be one of: {joined}.")
+        options["aspect_ratio"] = aspect_ratio
+    if resolution is not None:
+        if not resolutions:
+            raise ImageGenerateError("This model does not accept resolution.")
+        if resolution not in resolutions:
+            joined = ", ".join(resolutions)
+            raise ImageGenerateError(f"resolution must be one of: {joined}.")
+        options["resolution"] = resolution
+    if width is None and height is None:
+        return options
+    if not uses_pixels:
+        raise ImageGenerateError("This model does not accept width or height.")
+    if width is None or height is None:
+        raise ImageGenerateError("width and height must be set together.")
+    assert divisor is not None
+    _check_edge("width", width, divisor)
+    _check_edge("height", height, divisor)
+    options["width"] = width
+    options["height"] = height
+    return options
+
+
 class Images:
-    """Images API for Venice AI."""
+    """Native image generation for Venice AI."""
 
     def __init__(self, client: "AsyncVeniceAIClient") -> None:
         """Initialize images API."""
@@ -674,27 +807,37 @@ class Images:
         self,
         model: str,
         prompt: str,
-        size: str = "1024x1024",
-        quality: str = "standard",
-        style: str = "vivid",
-        response_format: str = "url",
-        n: int = 1,
+        *,
+        constraints: dict[str, Any] | None = None,
+        aspect_ratio: str | None = None,
+        resolution: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> dict[str, Any]:
-        """Generate an image with Venice AI."""
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "size": size,
-            "quality": quality,
-            "style": style,
-            "response_format": response_format,
-            "n": n,
-        }
+        """Generate an image with POST /image/generate.
+
+        ``constraints`` is that model's ``model_spec.constraints``. Sizing
+        fields the model does not list are rejected here and are not sent.
+        ``"default"`` is not a model id on this endpoint.
+        """
+        if not isinstance(model, str) or not model.strip() or model == "default":
+            raise ImageGenerateError(
+                'model must be a Venice image model id, not "default".'
+            )
+        options = image_generate_options(
+            constraints,
+            prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            width=width,
+            height=height,
+        )
+        payload = {"model": model, **options}
 
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
-                "/images/generations",
+                "/image/generate",
                 headers=self.client._headers,
                 json=payload,
                 timeout=DEFAULT_IMAGE_TIMEOUT,
@@ -704,14 +847,21 @@ class Images:
 
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error("Venice AI Images API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "generating image") from err
+            _LOGGER.error(
+                "Venice AI Images API HTTP error %s: %s",
+                err.response.status_code,
+                error_detail,
+            )
+            raise _categorize_http_error(
+                err.response.status_code, error_detail, "generating image"
+            ) from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Images API request error: %s", err)
             raise NetworkError(f"Request error generating image: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode images JSON response: %s", response.text)
             raise VeniceAIError("Failed to decode images API response") from err
+
 
 
 class AsyncVeniceAIClient:

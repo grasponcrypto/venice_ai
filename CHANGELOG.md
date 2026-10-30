@@ -29,8 +29,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   current `(version=1, minor_version=1)` schema.
 
 ### Changed
+- **#46:** `generate_image` calls native `POST /image/generate` and requires an image model id from the coordinator's `type=image` list. Optional `aspect_ratio`, `resolution`, `width`, and `height` are sent only when that model's constraints list them. The response is `{id, model, format, image}` where `image` is base64 webp, not an OpenAI-style URL.
 - **PERF-4:** Centralised HTTP timeout/keepalive defaults in
   `const.py` so they can be tuned without touching `client.py`.
+
+### Removed
+- **#46:** `size`, `quality`, and `style` are no longer accepted. Those were OpenAI image enums. Automations that passed them need a real image model id and, if that model supports it, aspect ratio, resolution, or width and height.
 
 ### Fixed
 - **#33:** Add the missing `config_entry_not_loaded` exception translation so a service call against an unloaded entry shows a translated error instead of the raw key.

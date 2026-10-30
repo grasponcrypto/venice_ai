@@ -41,10 +41,14 @@ except ImportError:
     _HAS_AI_TASK = False
 
 from .client import (
+    IMAGE_GENERATE_FORMAT,
     AsyncVeniceAIClient,
     AuthenticationError,
+    ImageGenerateError,
     RateLimitError,
     VeniceAIError,
+    find_image_model,
+    image_model_constraints,
 )
 from .const import (
     CONF_CHAT_MODEL,
@@ -141,17 +145,40 @@ def _async_register_services(hass: HomeAssistant) -> None:
             )
 
         client: AsyncVeniceAIClient = entry.runtime_data.client
+        model_id = call.data["model"]
+        coordinator = entry.runtime_data.coordinator
+        image_models = []
+        if coordinator is not None and coordinator.data:
+            image_models = coordinator.data.get("image_models") or []
+        if not isinstance(image_models, list) or not image_models:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="image_models_unavailable",
+            )
+        model = find_image_model(image_models, model_id)
+        if model is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_image_model",
+                translation_placeholders={"model": model_id},
+            )
 
         try:
             response = await client.images.generate(
-                model="default",
-                prompt=call.data["prompt"],
-                size=call.data["size"],
-                quality=call.data["quality"],
-                style=call.data["style"],
-                response_format="url",
-                n=1,
+                model_id,
+                call.data["prompt"],
+                constraints=image_model_constraints(model),
+                aspect_ratio=call.data.get("aspect_ratio"),
+                resolution=call.data.get("resolution"),
+                width=call.data.get("width"),
+                height=call.data.get("height"),
             )
+        except ImageGenerateError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_image_request",
+                translation_placeholders={"reason": str(err)},
+            ) from err
         except VeniceAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
@@ -159,12 +186,24 @@ def _async_register_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(
                 f"Unexpected image API response type: {type(response).__name__}"
             )
-        data = response.get("data", [{}])
-        if not data or not isinstance(data, list) or len(data) < 1:
+        images = response.get("images")
+        if (
+            not isinstance(images, list)
+            or not images
+            or not isinstance(images[0], str)
+            or not images[0]
+        ):
+            if response.get("content_policy_violation_count"):
+                raise HomeAssistantError(
+                    "Venice AI rejected the image under its content policy"
+                )
             raise HomeAssistantError("No image data returned from Venice AI")
-        result = dict(data[0])
-        result.pop("b64_json", None)
-        return result
+        return {
+            "id": response.get("id"),
+            "model": model_id,
+            "format": IMAGE_GENERATE_FORMAT,
+            "image": images[0],
+        }
 
     # Only register AI Task service if platform is available
     if _HAS_AI_TASK:
@@ -274,11 +313,15 @@ def _async_register_services(hass: HomeAssistant) -> None:
                     }
                 ),
                 vol.Required("prompt"): cv.string,
-                vol.Optional("size", default="1024x1024"): vol.In(
-                    ("1024x1024", "1024x1792", "1792x1024")
+                vol.Required("model"): cv.string,
+                vol.Optional("aspect_ratio"): cv.string,
+                vol.Optional("resolution"): cv.string,
+                vol.Optional("width"): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=1280)
                 ),
-                vol.Optional("quality", default="standard"): vol.In(("standard", "hd")),
-                vol.Optional("style", default="vivid"): vol.In(("vivid", "natural")),
+                vol.Optional("height"): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=1280)
+                ),
             }
         ),
         supports_response=SupportsResponse.ONLY,

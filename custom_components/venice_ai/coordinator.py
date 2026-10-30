@@ -26,6 +26,7 @@ class VeniceAICoordinatorData(TypedDict):
 
     text_models: list[dict[str, Any]]
     audio_models: list[dict[str, Any]]
+    image_models: list[dict[str, Any]]
     voices: list[str]
 
 
@@ -55,6 +56,7 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         data: VeniceAICoordinatorData = {
             "text_models": [],
             "audio_models": [],
+            "image_models": [],
             "voices": [],
         }
 
@@ -144,11 +146,46 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         except Exception:
             _LOGGER.exception("Unexpected error fetching ASR models")
 
+        try:
+            image_models = await self.client.models.list(model_type="image")
+            if isinstance(image_models, list):
+                data["image_models"] = [
+                    model
+                    for model in image_models
+                    if isinstance(model, dict)
+                    and model.get("type") in (None, "", "image")
+                ]
+                _LOGGER.debug(
+                    "Coordinator fetched %d image models",
+                    len(data["image_models"]),
+                )
+        except AuthenticationError as err:
+            _LOGGER.error("Authentication error fetching image models: %s", err)
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except RateLimitError as err:
+            _LOGGER.warning("Rate limit exceeded fetching image models: %s", err)
+            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
+        except ServiceUnavailableError as err:
+            _LOGGER.warning(
+                "Venice AI service unavailable fetching image models: %s", err
+            )
+        except NetworkError as err:
+            _LOGGER.warning("Network error fetching image models: %s", err)
+        except VeniceAIError as err:
+            _LOGGER.warning("Venice AI error fetching image models: %s", err)
+        except Exception:
+            _LOGGER.exception("Unexpected error fetching image models")
+
         # MED-1: If every fetch failed and we have no data at all, surface the
         # failure to the coordinator so HA can apply back-off, show the entity
         # as unavailable, and fire repair issues.  Partial failures (e.g. only
         # ASR models missing) are tolerated so other platforms keep working.
-        if not data["text_models"] and not data["audio_models"] and not data["voices"]:
+        if (
+            not data["text_models"]
+            and not data["audio_models"]
+            and not data["image_models"]
+            and not data["voices"]
+        ):
             raise UpdateFailed(
                 "All Venice AI data fetches failed; coordinator has no data to return."
             )

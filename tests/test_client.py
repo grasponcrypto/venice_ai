@@ -208,3 +208,157 @@ class TestSanitizeHeaderValue:
                 loop.run_until_complete(c.close())
             finally:
                 loop.close()
+
+
+PIXEL = {"widthHeightDivisor": 8, "promptCharacterLimit": 20}
+ASPECT = {
+    "aspectRatios": ["1:1", "16:9"],
+    "widthHeightDivisor": 8,
+    "promptCharacterLimit": 100,
+}
+RESOLUTION = {
+    "resolutions": ["1K", "2K"],
+    "aspectRatios": ["1:1"],
+    "widthHeightDivisor": 8,
+}
+
+
+class TestImageGenerateOptions:
+    """Sizing rules for native POST /image/generate."""
+
+    def test_pixel_model_keeps_divisible_edges(self) -> None:
+        options = client.image_generate_options(
+            PIXEL, "a cat", width=1024, height=768
+        )
+        assert options["width"] == 1024
+        assert options["height"] == 768
+        assert options["format"] == "webp"
+        assert "aspect_ratio" not in options
+
+    def test_pixel_model_rejects_bad_divisor(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="divisible by 8"):
+            client.image_generate_options(PIXEL, "a cat", width=1004, height=768)
+
+    def test_pixel_model_rejects_edge_above_max(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="between 1 and 1280"):
+            client.image_generate_options(PIXEL, "a cat", width=1288, height=768)
+
+    def test_pixel_model_rejects_aspect_ratio(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="aspect_ratio"):
+            client.image_generate_options(PIXEL, "a cat", aspect_ratio="1:1")
+
+    def test_pixel_model_requires_both_edges(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="together"):
+            client.image_generate_options(PIXEL, "a cat", width=1024)
+
+    def test_aspect_model_keeps_listed_ratio(self) -> None:
+        options = client.image_generate_options(
+            ASPECT, "a cat", aspect_ratio="16:9"
+        )
+        assert options["aspect_ratio"] == "16:9"
+        assert "width" not in options
+
+    def test_aspect_model_rejects_unknown_ratio(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="one of"):
+            client.image_generate_options(ASPECT, "a cat", aspect_ratio="4:3")
+
+    def test_aspect_model_rejects_pixels(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="width or height"):
+            client.image_generate_options(
+                ASPECT, "a cat", width=1024, height=1024
+            )
+
+    def test_resolution_model_keeps_listed_tier(self) -> None:
+        options = client.image_generate_options(
+            RESOLUTION, "a cat", aspect_ratio="1:1", resolution="2K"
+        )
+        assert options["resolution"] == "2K"
+        assert options["aspect_ratio"] == "1:1"
+
+    def test_resolution_model_rejects_unknown_tier(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="resolution"):
+            client.image_generate_options(RESOLUTION, "a cat", resolution="8K")
+
+    def test_empty_constraints_reject_sizing(self) -> None:
+        options = client.image_generate_options({}, "a cat")
+        assert options == {"prompt": "a cat", "format": "webp"}
+        with pytest.raises(client.ImageGenerateError):
+            client.image_generate_options({}, "a cat", width=1024, height=1024)
+
+    def test_blank_prompt_rejected(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="Prompt is required"):
+            client.image_generate_options(PIXEL, "   ")
+
+    def test_prompt_over_limit_rejected(self) -> None:
+        with pytest.raises(client.ImageGenerateError, match="allows 20"):
+            client.image_generate_options(PIXEL, "x" * 21)
+
+    def test_find_image_model_skips_video(self) -> None:
+        models = [
+            {"id": "video-one", "type": "video"},
+            {"id": "flux", "type": "image", "model_spec": {"constraints": PIXEL}},
+        ]
+        found = client.find_image_model(models, "flux")
+        assert found is not None
+        assert client.image_model_constraints(found)["widthHeightDivisor"] == 8
+        assert client.find_image_model(models, "video-one") is None
+        assert client.find_image_model(models, "default") is None
+
+
+class _FakeImageResponse:
+    def __init__(self, payload: dict) -> None:
+        self.status_code = 200
+        self._payload = payload
+        self.text = "{}"
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeImageHttp:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def request(self, method: str, url: str, **kwargs):
+        self.calls.append((method, url, kwargs.get("json")))
+        return _FakeImageResponse({"id": "img-1", "images": ["abc"]})
+
+
+class TestNativeImageGenerate:
+    """The client posts to the native endpoint and omits unused sizing."""
+
+    async def test_posts_native_endpoint_without_openai_fields(self) -> None:
+        http = _FakeImageHttp()
+        api = client.AsyncVeniceAIClient("key", http_client=http)
+        result = await api.images.generate(
+            "flux",
+            "a cat",
+            constraints=PIXEL,
+            width=1024,
+            height=768,
+        )
+        method, url, payload = http.calls[0]
+        assert method == "POST"
+        assert url.endswith("/image/generate")
+        assert payload == {
+            "model": "flux",
+            "prompt": "a cat",
+            "format": "webp",
+            "width": 1024,
+            "height": 768,
+        }
+        assert "size" not in payload
+        assert "quality" not in payload
+        assert "style" not in payload
+        assert result["images"] == ["abc"]
+
+    async def test_default_model_is_rejected_before_the_request(self) -> None:
+        http = _FakeImageHttp()
+        api = client.AsyncVeniceAIClient("key", http_client=http)
+        with pytest.raises(client.ImageGenerateError, match="default"):
+            await api.images.generate("default", "a cat")
+        assert http.calls == []
+
