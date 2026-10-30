@@ -43,6 +43,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - **#39:** Register services when a config entry loads, and remove them when the last entry unloads.
 - **#42:** Add options-form descriptions, including the stream and timeout fields that had no label.
 - **#36:** Push diagnostic sensor updates when API metrics change instead of polling every 30 seconds.
+- **#45:** Remove the unused request-timeout option. Chat, streaming, TTS, STT, and image generation keep their own timeouts in `const.py`. A single slider cannot cover those waits.
 - **HA 2026.10 tool calls:** every tool call failed with
   `TypeError: ToolResultContent.__init__() got an unexpected keyword
   argument 'tool_result'`, surfacing as "Unexpected error during

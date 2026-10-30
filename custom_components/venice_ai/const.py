@@ -60,10 +60,9 @@ MAX_CHAT_LOG_LENGTH = 50
 # are rejected early with an ERROR result rather than causing an OOM spike.
 MAX_STT_BUFFER_SIZE = 10 * 1024 * 1024
 
-# Request timeout configuration (HIGH-4)
-# Users with slow connections or large payloads can raise this via options.
-CONF_REQUEST_TIMEOUT = "request_timeout"
-RECOMMENDED_REQUEST_TIMEOUT = 60.0
+# Request timeouts are per operation, not one user setting. A stream can
+# sit open for minutes while tokens arrive; a model-list call should fail
+# in seconds. See DEFAULT_HTTP_TIMEOUT and the per-call constants below.
 
 # Retry configuration constants (MED-4).
 # Extracted from client.py so they can be tuned without touching client logic.
@@ -81,7 +80,11 @@ FEATURE_MIN_VERSIONS: dict[str, str] = {
 }
 
 # QUAL-2 / PERF-4: httpx connection-pool and per-request timeout defaults.
-# Centralised here so users tuning behaviour can adjust a single value.
+# These are intentionally hardcoded. Chat, streaming chat, TTS, STT, and
+# image generation wait for different lengths of time; one options slider
+# cannot cover all of them without cutting off a stream or hanging a
+# short call. client.py passes the matching constant as the per-request
+# timeout. DEFAULT_HTTP_TIMEOUT is only the client-wide fallback.
 DEFAULT_HTTP_TIMEOUT = 30.0
 DEFAULT_HTTP_KEEPALIVE = 5
 DEFAULT_HTTP_MAX_CONNECTIONS = 10

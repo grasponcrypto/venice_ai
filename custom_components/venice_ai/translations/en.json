@@ -47,8 +47,7 @@
                     "stt_model": "STT Model",
                     "stt_response_format": "STT Response Format",
                     "stt_timestamps": "STT Include Timestamps",
-                    "stream_response": "Stream response",
-                    "request_timeout": "Request timeout (seconds)"
+                    "stream_response": "Stream response"
                 },
                 "data_description": {
                     "chat_model": "Chat model used for conversation. Only models that support function calling are listed.",
@@ -66,8 +65,7 @@
                     "stt_model": "Model used to transcribe speech.",
                     "stt_response_format": "Format of the transcription result.",
                     "stt_timestamps": "Include word timestamps when the model supports them.",
-                    "stream_response": "Stream the reply as it is generated instead of waiting for the full response.",
-                    "request_timeout": "Seconds to wait for a Venice AI response. Range 10 to 300."
+                    "stream_response": "Stream the reply as it is generated instead of waiting for the full response."
                 }
             }
         },
