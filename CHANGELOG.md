@@ -33,6 +33,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   `const.py` so they can be tuned without touching `client.py`.
 
 ### Fixed
+- **#33:** Add the missing `config_entry_not_loaded` exception translation so a service call against an unloaded entry shows a translated error instead of the raw key.
 - **HA 2026.10 tool calls:** every tool call failed with
   `TypeError: ToolResultContent.__init__() got an unexpected keyword
   argument 'tool_result'`, surfacing as "Unexpected error during

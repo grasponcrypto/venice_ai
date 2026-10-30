@@ -81,6 +81,9 @@
       "invalid_config_entry": {
         "message": "Config entry {config_entry} is not a Venice AI entry."
       },
+      "config_entry_not_loaded": {
+        "message": "Config entry {config_entry} is not loaded."
+      },
       "entity_not_found": {
         "message": "Venice AI Task entity not found for config entry {entry_id}."
       }
