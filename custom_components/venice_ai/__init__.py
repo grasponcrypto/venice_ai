@@ -51,7 +51,6 @@ from .const import (
     CONF_TTS_MODEL,
     CONF_STT_MODEL,
     DOMAIN,
-    HAS_VOLUPTUOUS_OPENAPI,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_STT_MODEL,
@@ -110,11 +109,6 @@ class VeniceAIConfigEntry(ConfigEntry):
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Venice AI Conversation."""
-    if not HAS_VOLUPTUOUS_OPENAPI:
-        _LOGGER.debug(
-            "voluptuous-openapi is not installed. LLM tool schema conversion "
-            "will be limited. Install with: pip install voluptuous-openapi"
-        )
 
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with Venice AI."""
