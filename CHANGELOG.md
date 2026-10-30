@@ -41,6 +41,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - **#40:** Refuse config entries newer than version 1, and persist the 1.0 to 1.1 bump with `async_update_entry`.
 - **#37:** Remove the unused in-memory conversation cache. Home Assistant already passes the chat log into the entity, and nothing wrote the local copy.
 - **#39:** Register services when a config entry loads, and remove them when the last entry unloads.
+- **#42:** Add options-form descriptions, including the stream and timeout fields that had no label.
 - **HA 2026.10 tool calls:** every tool call failed with
   `TypeError: ToolResultContent.__init__() got an unexpected keyword
   argument 'tool_result'`, surfacing as "Unexpected error during

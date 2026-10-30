@@ -46,7 +46,28 @@
                     "tts_speed": "TTS Speed",
                     "stt_model": "STT Model",
                     "stt_response_format": "STT Response Format",
-                    "stt_timestamps": "STT Include Timestamps"
+                    "stt_timestamps": "STT Include Timestamps",
+                    "stream_response": "Stream response",
+                    "request_timeout": "Request timeout (seconds)"
+                },
+                "data_description": {
+                    "chat_model": "Chat model used for conversation. Only models that support function calling are listed.",
+                    "prompt": "Instructions sent with every conversation. Home Assistant adds entity state and tool instructions.",
+                    "llm_hass_api": "Home Assistant APIs this assistant may use to control devices. Leave empty to disable control.",
+                    "temperature": "Higher values make replies more varied. Range 0 to 2.",
+                    "top_p": "Nucleus sampling cutoff. Range 0 to 1.",
+                    "max_tokens": "Maximum tokens in a single reply. Range 1 to 32768.",
+                    "strip_thinking_response": "Remove reasoning text from the spoken or displayed reply.",
+                    "disable_thinking": "Ask reasoning models not to use a thinking step.",
+                    "max_tool_iterations": "How many tool calls one turn may make. Range 1 to 20.",
+                    "tts_model_voice": "Speech model and voice, shown as model then voice.",
+                    "tts_response_format": "Audio format returned by text-to-speech.",
+                    "tts_speed": "Playback speed. Range 0.25 to 4.",
+                    "stt_model": "Model used to transcribe speech.",
+                    "stt_response_format": "Format of the transcription result.",
+                    "stt_timestamps": "Include word timestamps when the model supports them.",
+                    "stream_response": "Stream the reply as it is generated instead of waiting for the full response.",
+                    "request_timeout": "Seconds to wait for a Venice AI response. Range 10 to 300."
                 }
             }
         },
