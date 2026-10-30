@@ -42,6 +42,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - **#37:** Remove the unused in-memory conversation cache. Home Assistant already passes the chat log into the entity, and nothing wrote the local copy.
 - **#39:** Register services when a config entry loads, and remove them when the last entry unloads.
 - **#42:** Add options-form descriptions, including the stream and timeout fields that had no label.
+- **#36:** Push diagnostic sensor updates when API metrics change instead of polling every 30 seconds.
 - **HA 2026.10 tool calls:** every tool call failed with
   `TypeError: ToolResultContent.__init__() got an unexpected keyword
   argument 'tool_result'`, surfacing as "Unexpected error during
