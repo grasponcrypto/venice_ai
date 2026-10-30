@@ -62,6 +62,27 @@ class TestVeniceAIMetrics:
         assert metrics.prompt_tokens == 0
         assert metrics.total_tokens == 0
 
+    def test_listeners_fire_on_change_and_can_unsubscribe(self) -> None:
+        metrics = client.VeniceAIMetrics()
+        seen: list[int] = []
+        unsubscribe = metrics.add_listener(lambda: seen.append(metrics.request_count))
+        metrics.record_request()
+        unsubscribe()
+        metrics.record_request()
+        metrics.record_usage(None)
+        assert seen == [1]
+        assert metrics.request_count == 2
+
+    def test_listener_failure_does_not_break_recording(self) -> None:
+        metrics = client.VeniceAIMetrics()
+
+        def _boom() -> None:
+            raise RuntimeError("sensor gone")
+
+        metrics.add_listener(_boom)
+        metrics.record_error(ValueError("boom"))
+        assert metrics.error_count == 1
+
 
 class TestErrorCategorization:
     """Tests for ``_categorize_http_error`` status-code mapping."""

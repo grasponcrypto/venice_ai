@@ -5,8 +5,9 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -93,15 +94,44 @@ class VeniceAIMetrics:
     completion_tokens: int = 0
     total_tokens: int = 0
     last_error: str | None = None
+    _listeners: list[Callable[[], None]] = field(
+        default_factory=list, repr=False, compare=False
+    )
+
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Register a callback invoked after a counter changes.
+
+        The returned callable removes that listener. A listener that raises is
+        logged and does not fail the API call that recorded the metric.
+        """
+        self._listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            try:
+                self._listeners.remove(listener)
+            except ValueError:
+                return
+
+        return _unsubscribe
+
+    def _notify_listeners(self) -> None:
+        """Tell subscribers that a counter changed."""
+        for listener in tuple(self._listeners):
+            try:
+                listener()
+            except Exception:
+                _LOGGER.exception("Venice AI metrics listener failed")
 
     def record_request(self) -> None:
         """Increment the total request counter."""
         self.request_count += 1
+        self._notify_listeners()
 
     def record_error(self, error: BaseException) -> None:
         """Increment the error counter and remember the last error message."""
         self.error_count += 1
         self.last_error = f"{type(error).__name__}: {error}"
+        self._notify_listeners()
 
     def record_usage(self, usage: dict[str, Any] | None) -> None:
         """Accumulate token usage from an API ``usage`` block, if present."""
@@ -110,6 +140,7 @@ class VeniceAIMetrics:
         self.prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
         self.completion_tokens += int(usage.get("completion_tokens", 0) or 0)
         self.total_tokens += int(usage.get("total_tokens", 0) or 0)
+        self._notify_listeners()
 
 
 

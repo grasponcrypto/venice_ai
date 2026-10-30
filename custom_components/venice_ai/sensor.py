@@ -19,7 +19,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -108,7 +108,7 @@ class VeniceAIUsageSensor(SensorEntity):
     """A diagnostic sensor reporting a single Venice AI usage metric."""
 
     _attr_has_entity_name = True
-    _attr_should_poll = True
+    _attr_should_poll = False
     entity_description: VeniceAISensorDescription
 
     def __init__(
@@ -126,6 +126,24 @@ class VeniceAIUsageSensor(SensorEntity):
             name=entry.title,
             manufacturer="Venice AI",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to metric changes instead of polling."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._metrics.add_listener(self._handle_metrics_update))
+
+    @callback
+    def _handle_metrics_update(self) -> None:
+        """Schedule a state write. Metrics may be recorded off the event loop."""
+        if self.hass is None:
+            return
+        self.hass.loop.call_soon_threadsafe(self._async_write_if_added)
+
+    @callback
+    def _async_write_if_added(self) -> None:
+        """Write state only while the entity is still attached to Home Assistant."""
+        if self.hass is not None:
+            self.async_write_ha_state()
 
     @property
     def native_value(self) -> int | str | None:
