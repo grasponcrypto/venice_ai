@@ -38,6 +38,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - **#43:** Remove hardcoded sensor `name=` so Home Assistant uses the entity translations.
 - **#41:** Import `RateLimitError` directly. The `None` fallback could never run because `client.py` always defines it.
 - **#38:** Treat `voluptuous-openapi` as the hard requirement it already is. Remove the unused availability guards.
+- **#40:** Refuse config entries newer than version 1, and persist the 1.0 to 1.1 bump with `async_update_entry`.
 - **HA 2026.10 tool calls:** every tool call failed with
   `TypeError: ToolResultContent.__init__() got an unexpected keyword
   argument 'tool_result'`, surfacing as "Unexpected error during
