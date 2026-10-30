@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 import json
 import logging
 import time
-from collections import OrderedDict
 from typing import Any
 
 from homeassistant.components.conversation import (
@@ -30,7 +28,6 @@ from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import intent, llm, device_registry as dr, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
-from homeassistant.util import ulid as ulid_util
 from voluptuous_openapi import convert as voluptuous_convert
 
 from .client import RateLimitError, VeniceAIError
@@ -47,9 +44,7 @@ from .const import (
     RECOMMENDED_DISABLE_THINKING,
     CONF_STREAM_RESPONSE,
     RECOMMENDED_STREAM_RESPONSE,
-    CONVERSATION_TTL_SECONDS,
     DOMAIN,
-    MAX_CHAT_HISTORY_SIZE,
     MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
@@ -337,7 +332,12 @@ def _trim_chat_log(chat_log: ChatLog) -> None:
 
 
 class VeniceAIConversationEntity(ConversationEntity):
-    """Venice AI conversation entity."""
+    """Venice AI conversation entity.
+
+    Home Assistant owns the chat log passed into ``_async_handle_message``.
+    Do not register a config-entry update listener: the options flow reloads
+    the entry itself, and a listener alongside that raises ``ValueError``.
+    """
 
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the entity."""
@@ -359,132 +359,22 @@ class VeniceAIConversationEntity(ConversationEntity):
             model="Conversation",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
-        # Conversation history keyed by conversation_id.
-        # OrderedDict used as an LRU cache: entries are moved to the tail on
-        # each access and the oldest (head) entry is evicted when the dict
-        # exceeds MAX_CHAT_HISTORY_SIZE, preventing unbounded memory growth.
-        self._chat_logs: OrderedDict[str, ChatLog] = OrderedDict()
         # MED-2: cache compiled Template objects keyed by their source string so
         # the parse step is skipped on subsequent turns. The string is used as
         # the cache key because Template objects themselves are mutable and may
         # not be hashable. Stored on the entity so it survives across turns.
         self._template_cache: dict[str, Template] = {}
-        # HIGH-2: monotonic timestamps recording the most-recent access time of
-        # each conversation. Read by the periodic cleanup loop so the
-        # conversation cache can be trimmed when it grows.
-        self._last_access: dict[str, float] = {}
-        # HIGH-2: background task that periodically evicts idle conversations.
-        # The task is started in async_added_to_hass and cancelled on unload.
-        self._cleanup_task: asyncio.Task[None] | None = None
         # LOW-3: last conversation id we responded to; surfaced via
         # extra_state_attributes so automations can detect recent activity.
         self._last_conversation_id: str | None = None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """LOW-3: surface the live conversation state for the entity card.
-
-        Returning at least ``active_conversations`` (count of in-memory chat
-        logs) is non-sensitive and lets users/automations reason about
-        resource usage. ``last_conversation_id`` and ``model`` are exposed
-        for transparency.
-        """
+        """Surface the last conversation and model for the entity card."""
         return {
-            "active_conversations": len(self._chat_logs),
             "last_conversation_id": self._last_conversation_id,
             "model": self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
         }
-
-    async def _periodic_cleanup(self) -> None:
-        """HIGH-2: background loop that evicts idle conversations.
-
-        Sleeps for ``CONVERSATION_TTL_SECONDS`` between sweeps. Errors are
-        logged and the loop continues rather than terminating, so a transient
-        failure during cleanup does not stop future sweeps.
-        """
-        while True:
-            try:
-                await asyncio.sleep(CONVERSATION_TTL_SECONDS)
-                self._cleanup_old_conversations(time.monotonic())
-            except asyncio.CancelledError:
-                # Normal shutdown path
-                raise
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Error during periodic conversation cleanup")
-
-    def _cleanup_old_conversations(self, now: float) -> None:
-        """HIGH-2: evict conversations idle for more than CONVERSATION_TTL_SECONDS.
-
-        When the cache is at or above MAX_CHAT_HISTORY_SIZE, evict the
-        oldest half of conversations (LRU order) so the next request has
-        room to allocate. Conversations with no recorded ``_last_access``
-        are treated as never-used (newly created) and skipped.
-        """
-        cutoff = now - CONVERSATION_TTL_SECONDS
-        # Single pass: gather candidates and evict in one shot.
-        evicted = 0
-        # First, evict anything strictly older than the TTL.
-        for cid in list(self._last_access.keys()):
-            if self._last_access.get(cid, 0.0) < cutoff:
-                self._chat_logs.pop(cid, None)
-                self._last_access.pop(cid, None)
-                evicted += 1
-        # If still over the LRU limit, evict the oldest half by OrderedDict order.
-        if len(self._chat_logs) > MAX_CHAT_HISTORY_SIZE:
-            target = len(self._chat_logs) - (MAX_CHAT_HISTORY_SIZE // 2 or 1)
-            while evicted < target and self._chat_logs:
-                oldest_id, _ = self._chat_logs.popitem(last=False)
-                self._last_access.pop(oldest_id, None)
-                evicted += 1
-        if evicted:
-            _LOGGER.debug(
-                "HIGH-2 periodic cleanup evicted %d conversation(s); %d remain",
-                evicted,
-                len(self._chat_logs),
-            )
-
-    def _cancel_cleanup(self) -> None:
-        """HIGH-2: cancel the periodic cleanup task on unload."""
-        if self._cleanup_task is not None and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
-        self._cleanup_task = None
-
-    def _get_or_create_chat_log(self, conversation_id: str | None) -> ChatLog:
-        """Return the persisted ChatLog for *conversation_id*, or create a new one.
-
-        Uses the OrderedDict as an LRU cache:
-        - On hit: move the entry to the tail (most-recently-used position).
-        - On miss: create a new empty ChatLog, insert at the tail, and evict the
-          oldest entry (head) if the cache exceeds MAX_CHAT_HISTORY_SIZE.
-
-        The caller is responsible for appending the new user message after this
-        method returns.
-        """
-        cid = conversation_id or ulid_util.ulid_now()
-        if cid in self._chat_logs:
-            # Promote to most-recently-used
-            self._chat_logs.move_to_end(cid)
-            # HIGH-2: record access time so the periodic cleanup loop can
-            # distinguish active vs idle conversations.
-            self._last_access[cid] = time.monotonic()
-            _LOGGER.debug("Resuming existing conversation %s (%d messages)", cid, len(self._chat_logs[cid].content))
-            return self._chat_logs[cid]
-
-        # New conversation
-        chat_log = ChatLog(self.hass, conversation_id=cid, content=[])
-        self._chat_logs[cid] = chat_log
-        self._last_access[cid] = time.monotonic()
-        # Evict least-recently-used if over the limit
-        if len(self._chat_logs) > MAX_CHAT_HISTORY_SIZE:
-            evicted_id, _ = self._chat_logs.popitem(last=False)
-            self._last_access.pop(evicted_id, None)
-            _LOGGER.debug(
-                "Evicted oldest conversation %s from history cache (limit=%d)",
-                evicted_id,
-                MAX_CHAT_HISTORY_SIZE,
-            )
-        _LOGGER.debug("Started new conversation %s", cid)
-        return chat_log
 
     @property
     def supported_languages(self) -> list[str]:
@@ -1071,27 +961,6 @@ class VeniceAIConversationEntity(ConversationEntity):
             conversation_id=chat_log.conversation_id,
             response=intent_response,
         )
-
-    async def async_added_to_hass(self) -> None:
-        """Start the HIGH-2 cleanup loop.
-
-        NOTE: No add_update_listener is registered here because VeniceAIOptionsFlow
-        subclasses OptionsFlowWithReload (HA >= 2024.1), which automatically reloads
-        the entire integration when options are saved. Registering an update listener
-        alongside OptionsFlowWithReload raises:
-            ValueError: Config entry update listeners should not be used with OptionsFlowWithReload
-        The entity is recreated fresh on every reload, so a manual listener is unnecessary.
-        """
-        # HIGH-2: start the periodic cleanup task. Cancelled on unload.
-        if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = self.hass.async_create_background_task(
-                self._periodic_cleanup(), name="venice_ai_conversation_cleanup"
-            )
-            self.entry.async_on_unload(self._cancel_cleanup)
-
-    async def async_will_remove_from_hass(self) -> None:
-        """HIGH-2: stop the cleanup task when the entity is being removed."""
-        self._cancel_cleanup()
 
 
 async def async_setup_entry(

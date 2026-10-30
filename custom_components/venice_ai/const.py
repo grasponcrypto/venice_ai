@@ -54,9 +54,6 @@ CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
 RECOMMENDED_MAX_TOOL_ITERATIONS = 5
 MAX_CHAT_LOG_LENGTH = 50
 
-# Maximum number of concurrent conversations held in-memory (LRU eviction)
-MAX_CHAT_HISTORY_SIZE = 20
-
 # Maximum audio buffer size for STT to prevent memory spikes (10 MB).
 # Venice AI does not support chunked/streaming STT uploads; the entire audio
 # payload must be buffered before submission. Recordings exceeding this limit
@@ -73,9 +70,6 @@ RECOMMENDED_REQUEST_TIMEOUT = 60.0
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
 RETRY_MAX_DELAY = 30.0
-
-# Inactive conversation TTL in seconds (HIGH-2 periodic cleanup).
-CONVERSATION_TTL_SECONDS = 3600  # 1 hour
 
 # Feature minimum HA versions (MAINT-3).
 # Reference table for conditional feature activation and user-facing docs.
