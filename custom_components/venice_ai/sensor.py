@@ -41,7 +41,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="request_count",
         translation_key="request_count",
-        name="API requests",
         icon="mdi:api",
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -50,7 +49,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="error_count",
         translation_key="error_count",
-        name="API errors",
         icon="mdi:alert-circle",
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -59,7 +57,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="total_tokens",
         translation_key="total_tokens",
-        name="Total tokens",
         icon="mdi:counter",
         native_unit_of_measurement="tokens",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -69,7 +66,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="prompt_tokens",
         translation_key="prompt_tokens",
-        name="Prompt tokens",
         icon="mdi:counter",
         native_unit_of_measurement="tokens",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -79,7 +75,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="completion_tokens",
         translation_key="completion_tokens",
-        name="Completion tokens",
         icon="mdi:counter",
         native_unit_of_measurement="tokens",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -89,7 +84,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="last_error",
         translation_key="last_error",
-        name="Last error",
         icon="mdi:message-alert",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda m: m.last_error,
