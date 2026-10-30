@@ -7,13 +7,6 @@ DOMAIN = "venice_ai"
 # Coordinator refresh interval — must be a timedelta for DataUpdateCoordinator
 UPDATE_INTERVAL = timedelta(hours=12)
 
-# Centralized voluptuous_openapi detection
-try:
-    from voluptuous_openapi import convert as voluptuous_convert  # noqa: F401
-    HAS_VOLUPTUOUS_OPENAPI = True
-except ImportError:
-    HAS_VOLUPTUOUS_OPENAPI = False
-
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
 RECOMMENDED_CHAT_MODEL = "e2ee-gemma-4-31b"  # Venice AI default model with function calling support

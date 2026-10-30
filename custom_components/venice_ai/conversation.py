@@ -31,6 +31,7 @@ from homeassistant.helpers import intent, llm, device_registry as dr, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
+from voluptuous_openapi import convert as voluptuous_convert
 
 from .client import RateLimitError, VeniceAIError
 from .venice_api import ChatParameters, VeniceConversationService
@@ -48,7 +49,6 @@ from .const import (
     RECOMMENDED_STREAM_RESPONSE,
     CONVERSATION_TTL_SECONDS,
     DOMAIN,
-    HAS_VOLUPTUOUS_OPENAPI,
     MAX_CHAT_HISTORY_SIZE,
     MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
@@ -57,9 +57,6 @@ from .const import (
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
-
-if HAS_VOLUPTUOUS_OPENAPI:
-    from voluptuous_openapi import convert as voluptuous_convert  # type: ignore[import-untyped]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -196,42 +193,37 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
     if not tool.parameters:
         return None
 
-    if HAS_VOLUPTUOUS_OPENAPI:
-        try:
-            hashable = _convert_schema_to_hashable(tool.parameters)
-            parameters_schema = voluptuous_convert(hashable)
-            # voluptuous_openapi may return list for 'anyOf' patterns; simplify
-            if isinstance(parameters_schema, list):
-                parameters_schema = parameters_schema[0]
-            if isinstance(parameters_schema, dict) and "properties" in parameters_schema:
-                def _ensure_types(sub_schema: dict[str, Any]) -> None:
-                    if "properties" in sub_schema:
-                        for _, prop in sub_schema["properties"].items():
-                            if isinstance(prop, dict):
-                                if "type" not in prop:
-                                    if "properties" in prop:
-                                        prop["type"] = "object"
-                                    elif "enum" in prop:
-                                        prop["type"] = "string"
-                                    else:
-                                        prop["type"] = "string"
-                                _ensure_types(prop)
+    try:
+        hashable = _convert_schema_to_hashable(tool.parameters)
+        parameters_schema = voluptuous_convert(hashable)
+        # voluptuous_openapi may return list for 'anyOf' patterns; simplify
+        if isinstance(parameters_schema, list):
+            parameters_schema = parameters_schema[0]
+        if isinstance(parameters_schema, dict) and "properties" in parameters_schema:
+            def _ensure_types(sub_schema: dict[str, Any]) -> None:
+                if "properties" in sub_schema:
+                    for _, prop in sub_schema["properties"].items():
+                        if isinstance(prop, dict):
+                            if "type" not in prop:
+                                if "properties" in prop:
+                                    prop["type"] = "object"
+                                elif "enum" in prop:
+                                    prop["type"] = "string"
+                                else:
+                                    prop["type"] = "string"
+                            _ensure_types(prop)
 
-                _ensure_types(parameters_schema)
-                return parameters_schema
-            elif isinstance(parameters_schema, dict):
-                return {"type": "object", "properties": parameters_schema}
-            else:
-                _LOGGER.warning(
-                    "Unexpected schema type from voluptuous_openapi: %s",
-                    type(parameters_schema).__name__,
-                )
-                return {"type": "object", "properties": {}}
-        except Exception as e:
-            _LOGGER.error("Failed to convert schema: %s", e, exc_info=True)
-            return {"type": "object", "properties": {}}
-    else:
-        _LOGGER.debug("Cannot perform detailed schema conversion without voluptuous_openapi.")
+            _ensure_types(parameters_schema)
+            return parameters_schema
+        if isinstance(parameters_schema, dict):
+            return {"type": "object", "properties": parameters_schema}
+        _LOGGER.warning(
+            "Unexpected schema type from voluptuous_openapi: %s",
+            type(parameters_schema).__name__,
+        )
+        return {"type": "object", "properties": {}}
+    except Exception as err:
+        _LOGGER.error("Failed to convert schema: %s", err, exc_info=True)
         return {"type": "object", "properties": {}}
 
 
