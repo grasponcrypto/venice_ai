@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import (
     HomeAssistant,
@@ -108,7 +108,18 @@ class VeniceAIConfigEntry(ConfigEntry):
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up Venice AI Conversation."""
+    """Set up Venice AI Conversation.
+
+    Services are registered from ``async_setup_entry`` so they cannot be
+    called before a config entry has loaded.
+    """
+    return True
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register services once, when the first config entry loads."""
+    if hass.services.has_service(DOMAIN, SERVICE_GENERATE_IMAGE):
+        return
 
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with Venice AI."""
@@ -272,7 +283,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         ),
         supports_response=SupportsResponse.ONLY,
     )
-    return True
+
+
+def _async_unregister_services(hass: HomeAssistant) -> None:
+    """Remove services when the last config entry unloads."""
+    if hass.services.has_service(DOMAIN, SERVICE_GENERATE_IMAGE):
+        hass.services.async_remove(DOMAIN, SERVICE_GENERATE_IMAGE)
+    if hass.services.has_service(DOMAIN, SERVICE_AI_TASK):
+        hass.services.async_remove(DOMAIN, SERVICE_AI_TASK)
+
+
+def _has_other_loaded_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Return True if another Venice AI entry is still loaded."""
+    return any(
+        other.entry_id != entry.entry_id and other.state is ConfigEntryState.LOADED
+        for other in hass.config_entries.async_entries(DOMAIN)
+    )
 
 
 @callback
@@ -505,6 +531,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     _LOGGER.info("Successfully forwarded entry setups")
 
     await async_setup_repairs(hass, entry)
+    _async_register_services(hass)
     return True
 
 
@@ -562,5 +589,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) ->
     # Explicitly close the async client — async_on_unload cannot await coroutines.
     client: AsyncVeniceAIClient = entry.runtime_data.client
     await client.close()
+
+    if unload_ok and not _has_other_loaded_entry(hass, entry):
+        _async_unregister_services(hass)
 
     return unload_ok
