@@ -40,13 +40,12 @@ try:
 except ImportError:
     _HAS_AI_TASK = False
 
-from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
-
-# Backwards-compatible import: older client.py may not define RateLimitError
-try:
-    from .client import RateLimitError
-except ImportError:
-    RateLimitError = None  # type: ignore[misc, assignment]
+from .client import (
+    AsyncVeniceAIClient,
+    AuthenticationError,
+    RateLimitError,
+    VeniceAIError,
+)
 from .const import (
     CONF_CHAT_MODEL,
     CONF_TTS_MODEL,
@@ -320,7 +319,7 @@ def _async_on_coordinator_update(
         # re-authentication dialog without requiring the user to manually
         # locate and act on the repair issue.
         entry.async_start_reauth(hass)
-    elif RateLimitError is not None and isinstance(cause, RateLimitError):
+    elif isinstance(cause, RateLimitError):
         ir.async_create_issue(
             hass,
             DOMAIN,
