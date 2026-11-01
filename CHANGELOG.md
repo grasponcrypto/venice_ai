@@ -6,6 +6,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+## [1.1.0-dev] - 2026-11-01
+
 ### Added
 - **DOC-1:** Module-level docstrings on all public client classes
   (`AsyncVeniceAIClient`, `ChatCompletions`, `Models`, `Speech`,
@@ -45,7 +47,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - **#40:** Refuse config entries newer than version 1, and persist the 1.0 to 1.1 bump with `async_update_entry`.
 - **#37:** Remove the unused in-memory conversation cache. Home Assistant already passes the chat log into the entity, and nothing wrote the local copy.
 - **#39:** Register services when a config entry loads, and remove them when the last entry unloads.
-- **#42:** Add options-form descriptions, including the stream and timeout fields that had no label.
+- **#42:** Add a description on every options-form field, including stream response.
 - **#36:** Push diagnostic sensor updates when API metrics change instead of polling every 30 seconds.
 - **#45:** Remove the unused request-timeout option. Chat, streaming, TTS, STT, and image generation keep their own timeouts in `const.py`. A single slider cannot cover those waits.
 - **HA 2026.10 tool calls:** every tool call failed with
@@ -85,5 +87,6 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev...HEAD
+[1.1.0-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.0.0...1.1.0-dev
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0
