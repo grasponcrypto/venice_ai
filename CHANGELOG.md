@@ -6,6 +6,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+## [1.1.0-dev.3] - 2026-11-02
+
+### Fixed
+- **STT state:** Home Assistant 2026.10 owns speech-to-text state and stores the last processed time there. Showing the model id in that state made the UI say Invalid timestamp after a successful transcription. The model is now an entity attribute. The state is left to Home Assistant.
+- **AI Task action:** `venice_ai.ai_task` built `GenDataTask` without the required `name` and built `ChatLog` with the old constructor. On 2026.10 that raised `TypeError` before the handler could record it, so Developer Tools showed Unknown error and Last error stayed `none`. The action now uses `internal_async_generate_data` when that API exists.
+
 ## [1.1.0-dev.2] - 2026-11-02
 
 ### Fixed
@@ -100,7 +106,9 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.1...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...HEAD
+[1.1.0-dev.3]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.2...1.1.0-dev.3
+[1.1.0-dev.2]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.1...1.1.0-dev.2
 [1.1.0-dev.1]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev...1.1.0-dev.1
 [1.1.0-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.0.0...1.1.0-dev
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0

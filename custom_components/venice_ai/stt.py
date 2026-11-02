@@ -102,14 +102,17 @@ class VeniceAISTT(SpeechToTextEntity):
         )
 
     @property
-    def state(self) -> str:
+    def extra_state_attributes(self) -> dict[str, str]:
         """Return the configured model.
 
-        Speech-to-text entities otherwise have no state, so the device page
-        shows Unknown even when the provider is ready.
+        Do not override ``state``. Home Assistant 2026.10 owns speech-to-text
+        state and sets it to the last processed time. The frontend formats
+        that state as a timestamp, so a model id is shown as Invalid timestamp
+        even when transcription succeeded.
         """
         model = self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
-        return str(model or RECOMMENDED_STT_MODEL)
+        return {"model": str(model or RECOMMENDED_STT_MODEL)}
+
 
     @property
     def supported_languages(self) -> list[str]:

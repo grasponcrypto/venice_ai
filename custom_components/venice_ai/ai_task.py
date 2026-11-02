@@ -13,6 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .ai_task_support import append_task_instruction
 from .client import VeniceAIError
 from .venice_api import ChatParameters, VeniceConversationService
 from .const import (
@@ -153,8 +154,8 @@ else:
                     }
                     messages.append(venice_msg)
 
-            # Append task instructions as a user message in the local list
-            messages.append({"role": "user", "content": task.instructions})
+            # The 2026.10 chat log already ends with these instructions.
+            append_task_instruction(messages, task.instructions)
 
             if not messages or messages[-1].get("role") != "user":
                 raise HomeAssistantError("No user message found in chat log")

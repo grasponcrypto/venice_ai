@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
 
@@ -40,6 +41,7 @@ try:
 except ImportError:
     _HAS_AI_TASK = False
 
+from .ai_task_support import build_gen_data_task
 from .client import (
     IMAGE_GENERATE_FORMAT,
     AsyncVeniceAIClient,
@@ -109,6 +111,34 @@ class VeniceAIConfigEntry(ConfigEntry):
     """Venice AI config entry with runtime data."""
 
     runtime_data: VeniceAIRuntimeData
+
+
+async def _async_dispatch_ai_task(
+    hass: HomeAssistant,
+    entity: object,
+    gen_task: object,
+    task_text: str,
+    context: Any,
+) -> Any:
+    """Run a data task on the AI Task API this core actually provides.
+
+    2026.10 exposes ``internal_async_generate_data`` and builds the chat log
+    itself. Older cores still expect ``async_generate_data(task, chat_log)``.
+    """
+    internal = getattr(entity, "internal_async_generate_data", None)
+    if callable(internal):
+        from homeassistant.helpers.chat_session import async_get_chat_session
+
+        with async_get_chat_session(hass) as session:
+            if "context" in inspect.signature(internal).parameters:
+                return await internal(session, gen_task, context)
+            return await internal(session, gen_task)
+
+    chat_log = conversation.ChatLog(
+        conversation_id=str(uuid.uuid4()),
+        content=[conversation.UserContent(content=task_text)],
+    )
+    return await entity.async_generate_data(gen_task, chat_log)  # type: ignore[attr-defined]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -256,31 +286,38 @@ def _async_register_services(hass: HomeAssistant) -> None:
             task_text = call.data["task"]
             structure = call.data.get("structure")
 
-            gen_task = ai_task.GenDataTask(
-                instructions=task_text,
-                structure=structure,
-            )
-
-            chat_log = conversation.ChatLog(
-                conversation_id=str(uuid.uuid4()),
-                content=[
-                    conversation.UserContent(content=task_text)
-                ]
-            )
-
             try:
-                # Call the public async_generate_data API instead of the
-                # private _async_generate_data method (CRIT-3 fix).  This
-                # respects the entity's public contract and avoids bypassing
-                # any locking or lifecycle checks the platform may add.
-                result = await ai_task_entity.async_generate_data(gen_task, chat_log)
+                # Build the task inside the handler. On 2026.10 GenDataTask
+                # requires ``name``; constructing it above this try raised
+                # TypeError, which Developer Tools reports as Unknown error
+                # and which never reached record_error.
+                gen_task = build_gen_data_task(
+                    ai_task.GenDataTask,
+                    task_text,
+                    structure,
+                )
+                result = await _async_dispatch_ai_task(
+                    hass,
+                    ai_task_entity,
+                    gen_task,
+                    task_text,
+                    call.context,
+                )
                 return {
                     "conversation_id": result.conversation_id,
                     "data": result.data,
                 }
             except asyncio.CancelledError:
                 raise
+            except HomeAssistantError:
+                raise
             except Exception as err:
+                metrics = getattr(
+                    getattr(entry.runtime_data, "client", None), "metrics", None
+                )
+                if metrics is not None:
+                    metrics.record_error(err)
+                _LOGGER.exception("Venice AI task failed")
                 raise HomeAssistantError(f"Error generating data: {err}") from err
 
         hass.services.async_register(
