@@ -354,6 +354,8 @@ class TestNativeImageGenerate:
         assert "quality" not in payload
         assert "style" not in payload
         assert result["images"] == ["abc"]
+        assert api.metrics.request_count == 1
+        assert api.metrics.error_count == 0
 
     async def test_default_model_is_rejected_before_the_request(self) -> None:
         http = _FakeImageHttp()
@@ -361,4 +363,66 @@ class TestNativeImageGenerate:
         with pytest.raises(client.ImageGenerateError, match="default"):
             await api.images.generate("default", "a cat")
         assert http.calls == []
+
+
+class _FakeStreamResponse:
+    """Minimal httpx response for ``ChatCompletions.create``."""
+
+    def __init__(self, lines: list[str], status_code: int = 200) -> None:
+        self.status_code = status_code
+        self._lines = lines
+        self.text = ""
+        self.closed = False
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            import httpx
+
+            raise httpx.HTTPStatusError(
+                "boom",
+                request=httpx.Request("POST", "https://api.venice.ai/api/v1/chat/completions"),
+                response=httpx.Response(self.status_code, request=httpx.Request("POST", "https://api.venice.ai")),
+            )
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _FakeStreamHttp:
+    def __init__(self, response: _FakeStreamResponse) -> None:
+        self.response = response
+
+    def build_request(self, *args, **kwargs):
+        return {"args": args, "kwargs": kwargs}
+
+    async def send(self, request, stream: bool = False):
+        return self.response
+
+
+class TestStreamingChatMetrics:
+    """Streaming chat is the default path and must move the diagnostic sensors."""
+
+    async def test_stream_records_request_and_usage(self) -> None:
+        lines = [
+            'data: {"choices":[{"delta":{"content":"hi"}}]}',
+            'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}',
+            "data: [DONE]",
+        ]
+        http = _FakeStreamHttp(_FakeStreamResponse(lines))
+        api = client.AsyncVeniceAIClient("key", http_client=http)
+
+        async with api.chat.create(model="m", messages=[{"role": "user", "content": "hi"}]) as stream:
+            chunks = [chunk async for chunk in stream]
+
+        assert len(chunks) == 2
+        assert api.metrics.request_count == 1
+        assert api.metrics.prompt_tokens == 4
+        assert api.metrics.completion_tokens == 2
+        assert api.metrics.total_tokens == 6
+        assert api.metrics.error_count == 0
+        assert http.response.closed is True
 

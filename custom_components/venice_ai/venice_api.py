@@ -234,7 +234,7 @@ class VeniceConversationService:
             async for chunk in stream:
                 # Capture token usage emitted in the final chunk
                 # (requires stream_options.include_usage=True on the request).
-                if chunk.usage:
+                if getattr(chunk, "usage", None):
                     result.usage = chunk.usage
                     _LOGGER.debug(
                         "[PERF] chat_stream — usage chunk received: prompt=%s completion=%s total=%s",

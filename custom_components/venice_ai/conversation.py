@@ -963,6 +963,120 @@ class VeniceAIConversationEntity(ConversationEntity):
         )
 
 
+async def _async_migrate_conversation_entity(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Keep Assist pointed at this agent after the unique_id change.
+
+    Builds before 0.9 registered the agent as ``unique_id=entry.entry_id``
+    and named it "VeniceAI Conversation". Current builds use
+    ``{entry_id}_conversation``. Leaving the old row in the entity registry
+    makes Home Assistant show "no longer provided" and any Assist pipeline
+    that still names that entity fails to load.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    old_unique_id = entry.entry_id
+    new_unique_id = f"{entry.entry_id}_conversation"
+    old_entity_id = registry.async_get_entity_id("conversation", DOMAIN, old_unique_id)
+    if old_entity_id is None:
+        return
+
+    new_entity_id = registry.async_get_entity_id("conversation", DOMAIN, new_unique_id)
+    if new_entity_id is None:
+        _LOGGER.info(
+            "Migrating conversation entity %s to unique_id %s",
+            old_entity_id,
+            new_unique_id,
+        )
+        registry.async_update_entity(old_entity_id, new_unique_id=new_unique_id)
+        return
+
+    await _async_retarget_assist_pipelines(hass, old_entity_id, new_entity_id)
+    _LOGGER.info(
+        "Removing orphaned conversation entity %s; live agent is %s",
+        old_entity_id,
+        new_entity_id,
+    )
+    registry.async_remove(old_entity_id)
+
+
+async def _async_retarget_assist_pipelines(
+    hass: HomeAssistant, old_entity_id: str, new_entity_id: str
+) -> None:
+    """Point pipelines that still name the orphaned agent at the live one.
+
+    A failure here must not block setup. The orphan is still removed by the
+    caller so the device page stops offering a dead agent.
+    """
+    try:
+        from homeassistant.components.assist_pipeline import (
+            async_get_pipelines,
+            async_update_pipeline,
+        )
+        from homeassistant.components.assist_pipeline.pipeline import (
+            KEY_ASSIST_PIPELINE,
+        )
+    except ImportError:
+        return
+
+    try:
+        pipelines = async_get_pipelines(hass)
+    except Exception:
+        _LOGGER.debug("Assist pipelines unavailable; skipping retarget", exc_info=True)
+        pipelines = []
+
+    for pipeline in pipelines:
+        if getattr(pipeline, "conversation_engine", None) != old_entity_id:
+            continue
+        pipeline_id = getattr(pipeline, "id", None)
+        if not pipeline_id:
+            continue
+        try:
+            await async_update_pipeline(
+                hass, pipeline_id, conversation_engine=new_entity_id
+            )
+            _LOGGER.info(
+                "Retargeted Assist pipeline %s from %s to %s",
+                pipeline_id,
+                old_entity_id,
+                new_entity_id,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Could not retarget Assist pipeline %s from %s to %s",
+                pipeline_id,
+                old_entity_id,
+                new_entity_id,
+            )
+
+    data = hass.data.get(KEY_ASSIST_PIPELINE)
+    store = getattr(data, "pipeline_store", None)
+    if store is None:
+        return
+    try:
+        preferred = store.async_get_preferred_item()
+    except Exception:
+        _LOGGER.debug("Preferred Assist pipeline unavailable", exc_info=True)
+        return
+    if preferred != old_entity_id:
+        return
+    try:
+        store.async_set_preferred_item(new_entity_id)
+        _LOGGER.info(
+            "Retargeted preferred Assist pipeline from %s to %s",
+            old_entity_id,
+            new_entity_id,
+        )
+    except Exception:
+        _LOGGER.exception(
+            "Could not retarget preferred Assist pipeline from %s to %s",
+            old_entity_id,
+            new_entity_id,
+        )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -978,6 +1092,14 @@ async def async_setup_entry(
             entry.entry_id,
         )
         return
+
+    try:
+        await _async_migrate_conversation_entity(hass, entry)
+    except Exception:
+        _LOGGER.exception(
+            "Conversation entity migration failed for %s; continuing setup",
+            entry.entry_id,
+        )
 
     entity = VeniceAIConversationEntity(entry)
     async_add_entities([entity])

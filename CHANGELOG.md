@@ -6,6 +6,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+## [1.1.0-dev.1] - 2026-11-02
+
+### Fixed
+- **#36:** Streaming chat, TTS, STT, and image generation now record diagnostic metrics. Previously only non-streaming chat did, so the sensors stayed at 0 while Stream response was on (the default). Last error shows blank when nothing has failed, instead of Home Assistant's "Unknown".
+- **Conversation entity:** Adopt the pre-0.9 agent (`unique_id` was the config entry id, name "VeniceAI Conversation") so Assist pipelines keep using it. If a newer agent already exists, pipelines that still name the old entity are pointed at the live one and the orphan is removed.
+
 ## [1.1.0-dev] - 2026-11-01
 
 ### Added
@@ -87,6 +93,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.1...HEAD
+[1.1.0-dev.1]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev...1.1.0-dev.1
 [1.1.0-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.0.0...1.1.0-dev
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0

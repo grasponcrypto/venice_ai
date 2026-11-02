@@ -244,6 +244,7 @@ class ChatCompletions:
         if stream_options is not None:
             data["stream_options"] = stream_options
 
+        self.client.metrics.record_request()
         response: httpx.Response | None = None
         _connect_start = time.monotonic()
         _LOGGER.debug("[PERF-HTTP] POST /chat/completions (stream) — opening connection")
@@ -272,12 +273,18 @@ class ChatCompletions:
             except Exception:
                 pass
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "streaming chat") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "streaming chat"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             if response is not None:
                 await response.aclose()
             _LOGGER.error("Venice AI request error: %s", err)
-            raise NetworkError(f"Request error (streaming chat): {err}") from err
+            network_err = NetworkError(f"Request error (streaming chat): {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
         async def _stream() -> AsyncGenerator[ChatCompletionChunk, None]:
             _chunk_count = 0
@@ -290,7 +297,13 @@ class ChatCompletions:
                         try:
                             chunk_data = json.loads(line[6:])
                             _chunk_count += 1
-                            yield ChatCompletionChunk(chunk_data)
+                            chunk = ChatCompletionChunk(chunk_data)
+                            # Final chunk carries usage when include_usage is set.
+                            # Non-streaming already records this; streaming must too
+                            # or the diagnostic sensors stay at 0 (the default path).
+                            if chunk.usage:
+                                self.client.metrics.record_usage(chunk.usage)
+                            yield chunk
                         except json.JSONDecodeError:
                             _LOGGER.warning("Failed to decode stream chunk: %s", line)
                     else:
@@ -304,7 +317,9 @@ class ChatCompletions:
                 # Convert mid-stream transport failures (connection reset, server close,
                 # timeout) to a typed NetworkError so callers get consistent exceptions.
                 _LOGGER.error("Stream interrupted by transport error: %s", err)
-                raise NetworkError(f"Stream interrupted: {err}") from err
+                network_err = NetworkError(f"Stream interrupted: {err}")
+                self.client.metrics.record_error(network_err)
+                raise network_err from err
             finally:
                 if response is not None:
                     await response.aclose()
@@ -485,6 +500,7 @@ class Speech:
         }
 
         _gen_start = time.monotonic()
+        self.client.metrics.record_request()
         _LOGGER.debug(
             "[PERF-HTTP] POST /audio/speech (non-streaming) — model=%s, voice=%s, format=%s, text=%d chars",
             model, voice, audio_output, len(text),
@@ -518,10 +534,16 @@ class Speech:
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "generating speech") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "generating speech"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise NetworkError(f"Request error generating speech: {err}") from err
+            network_err = NetworkError(f"Request error generating speech: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
     async def generate_streaming(
         self,
@@ -544,6 +566,7 @@ class Speech:
         audio_headers = {
             "Authorization": f"Bearer {self.client._api_key}",
         }
+        self.client.metrics.record_request()
 
         try:
             response = await self.client._async_request_with_retry(
@@ -579,7 +602,9 @@ class Speech:
                 )
             except httpx.TransportError as err:
                 _LOGGER.error("Streaming TTS transport error: %s", err)
-                raise NetworkError(f"Streaming TTS interrupted: {err}") from err
+                network_err = NetworkError(f"Streaming TTS interrupted: {err}")
+                self.client.metrics.record_error(network_err)
+                raise network_err from err
 
         except httpx.HTTPStatusError as err:
             error_detail = "Unknown error"
@@ -592,10 +617,16 @@ class Speech:
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "streaming speech") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "streaming speech"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise NetworkError(f"Request error generating streaming speech: {err}") from err
+            network_err = NetworkError(f"Request error generating streaming speech: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
 
 class Transcriptions:
@@ -627,6 +658,7 @@ class Transcriptions:
         }
 
         _stt_start = time.monotonic()
+        self.client.metrics.record_request()
         _LOGGER.debug(
             "[PERF-HTTP] POST /audio/transcriptions — model=%s, format=%s, audio=%d bytes",
             model, response_format, len(audio_data),
@@ -654,13 +686,21 @@ class Transcriptions:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Transcriptions API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "creating transcription") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "creating transcription"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
-            raise NetworkError(f"Request error creating transcription: {err}") from err
+            network_err = NetworkError(f"Request error creating transcription: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode transcriptions JSON response: %s", response.text)
-            raise VeniceAIError("Failed to decode transcriptions API response") from err
+            decode_err = VeniceAIError("Failed to decode transcriptions API response")
+            self.client.metrics.record_error(decode_err)
+            raise decode_err from err
 
 
 IMAGE_GENERATE_FORMAT = "webp"
@@ -833,6 +873,7 @@ class Images:
             height=height,
         )
         payload = {"model": model, **options}
+        self.client.metrics.record_request()
 
         try:
             response = await self.client._async_request_with_retry(
@@ -852,15 +893,21 @@ class Images:
                 err.response.status_code,
                 error_detail,
             )
-            raise _categorize_http_error(
+            categorized = _categorize_http_error(
                 err.response.status_code, error_detail, "generating image"
-            ) from err
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Images API request error: %s", err)
-            raise NetworkError(f"Request error generating image: {err}") from err
+            network_err = NetworkError(f"Request error generating image: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode images JSON response: %s", response.text)
-            raise VeniceAIError("Failed to decode images API response") from err
+            decode_err = VeniceAIError("Failed to decode images API response")
+            self.client.metrics.record_error(decode_err)
+            raise decode_err from err
 
 
 

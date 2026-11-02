@@ -66,6 +66,7 @@ class FakeChunk:
 
     def __init__(self, choices: list[dict[str, Any]]) -> None:
         self.choices = choices
+        self.usage = None
 
 
 class FakeStream:

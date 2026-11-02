@@ -86,7 +86,7 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
         translation_key="last_error",
         icon="mdi:message-alert",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda m: m.last_error,
+        value_fn=lambda m: m.last_error or "",
     ),
 )
 
