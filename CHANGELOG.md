@@ -6,6 +6,13 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+## [1.1.0-dev.2] - 2026-11-02
+
+### Fixed
+- **Generate Image action:** The Actions form had no inputs, so a click failed with `required key not provided` for `config_entry` and `prompt`. Field selectors now live in `services.yaml`.
+- **STT row:** The speech-to-text entity is named STT and shows the configured model instead of Unknown.
+- **Last error:** An empty sensor state is still Home Assistant's Unknown. When nothing has failed, the sensor now reads `none`.
+
 ## [1.1.0-dev.1] - 2026-11-02
 
 ### Fixed

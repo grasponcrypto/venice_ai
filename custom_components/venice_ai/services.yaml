@@ -1,6 +1,62 @@
-# Services for the Venice AI integration
+# Field selectors for the Actions UI. Names and descriptions come from
+# strings.json. The Python schema in __init__.py still validates the call.
+# size, quality, and style are not accepted.
 
-# Image generation is registered programmatically in __init__.py.
-# generate_image takes config_entry, prompt, and model, plus optional
-# aspect_ratio, resolution, width, and height. size, quality, and style
-# are not accepted.
+generate_image:
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: venice_ai
+    prompt:
+      required: true
+      example: "A red bicycle leaning against a brick wall"
+      selector:
+        text:
+          multiline: true
+    model:
+      required: true
+      example: "flux-dev"
+      selector:
+        text:
+    aspect_ratio:
+      example: "16:9"
+      selector:
+        text:
+    resolution:
+      example: "1K"
+      selector:
+        text:
+    width:
+      selector:
+        number:
+          min: 1
+          max: 1280
+          mode: box
+    height:
+      selector:
+        number:
+          min: 1
+          max: 1280
+          mode: box
+
+ai_task:
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: venice_ai
+    task:
+      required: true
+      example: "List three colors as a JSON array"
+      selector:
+        text:
+          multiline: true
+    structure:
+      example: "{\"type\": \"array\", \"items\": {\"type\": \"string\"}}"
+      selector:
+        text:
+          multiline: true
+

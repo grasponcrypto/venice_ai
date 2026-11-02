@@ -83,6 +83,9 @@ async def async_setup_entry(
 class VeniceAISTT(SpeechToTextEntity):
     """The Venice AI Speech-to-Text provider."""
 
+    _attr_has_entity_name = True
+    _attr_name = "STT"
+
     def __init__(
         self,
         entry: ConfigEntry,
@@ -90,7 +93,6 @@ class VeniceAISTT(SpeechToTextEntity):
         """Initialize Venice AI STT."""
         self.entry = entry
         self._attr_unique_id = f"{entry.entry_id}_stt"
-        self._attr_name = entry.title
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -98,6 +100,16 @@ class VeniceAISTT(SpeechToTextEntity):
             model="STT",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
+
+    @property
+    def state(self) -> str:
+        """Return the configured model.
+
+        Speech-to-text entities otherwise have no state, so the device page
+        shows Unknown even when the provider is ready.
+        """
+        model = self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+        return str(model or RECOMMENDED_STT_MODEL)
 
     @property
     def supported_languages(self) -> list[str]:

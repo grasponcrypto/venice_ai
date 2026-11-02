@@ -86,7 +86,7 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
         translation_key="last_error",
         icon="mdi:message-alert",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda m: m.last_error or "",
+        value_fn=lambda m: m.last_error or "none",
     ),
 )
 
@@ -128,22 +128,18 @@ class VeniceAIUsageSensor(SensorEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to metric changes instead of polling."""
+        """Subscribe to metric changes and publish the current value."""
         await super().async_added_to_hass()
         self.async_on_remove(self._metrics.add_listener(self._handle_metrics_update))
+        # Overwrite a restored "unknown" from an older build before the next request.
+        self.async_write_ha_state()
 
     @callback
     def _handle_metrics_update(self) -> None:
-        """Schedule a state write. Metrics may be recorded off the event loop."""
+        """Push the new counter. record_* runs on the event loop."""
         if self.hass is None:
             return
-        self.hass.loop.call_soon_threadsafe(self._async_write_if_added)
-
-    @callback
-    def _async_write_if_added(self) -> None:
-        """Write state only while the entity is still attached to Home Assistant."""
-        if self.hass is not None:
-            self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
     @property
     def native_value(self) -> int | str | None:
