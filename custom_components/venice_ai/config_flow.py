@@ -131,7 +131,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _LOGGER.debug("Validating Venice AI API key by fetching models")
-                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                async with AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY],
+                    http_client=get_async_client(self.hass),
+                ) as client:
                     models_response = await client.models.list()
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
@@ -175,7 +178,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _LOGGER.debug("Validating new Venice AI API key for re-auth")
-                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                async with AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY],
+                    http_client=get_async_client(self.hass),
+                ) as client:
                     models_response = await client.models.list()
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
