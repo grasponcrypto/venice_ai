@@ -829,6 +829,16 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         if user_input is not None:
             suggested_values.update(user_input)
 
+        # A retired model id is not in the live dropdown. Home Assistant
+        # rejects a suggested select value that is not an option, which
+        # blocks this form. Pre-select a model that is actually listed.
+        chat_ids = {opt.get("value") for opt in chat_options}
+        if chat_ids and suggested_values.get(CONF_CHAT_MODEL) not in chat_ids:
+            if RECOMMENDED_CHAT_MODEL in chat_ids:
+                suggested_values[CONF_CHAT_MODEL] = RECOMMENDED_CHAT_MODEL
+            else:
+                suggested_values[CONF_CHAT_MODEL] = next(iter(chat_ids))
+
         # Always resolve the combined TTS field last so it reflects the correct
         # pre-selection regardless of what was merged above.
         suggested_values[_CONF_TTS_MODEL_VOICE] = _resolve_combined_tts_value(

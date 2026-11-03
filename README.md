@@ -50,9 +50,9 @@ To configure the Venice AI integration:
 
 The options flow lists every text model returned by Venice AI. It does not filter that list to models that support function calling. Device control still needs a model that can call tools, so choose one that does if you enable Control Home Assistant.
 
-The default chat model is `e2ee-gemma-4-31b`.
+The default chat model is `deepseek-v4-1-flash-1017-uncensored` (DeepSeek V4.1 Flash 1017 Uncensored). Venice marks that model as both `default` and `function_calling_default`. It supports tool calling, structured responses, and a 1M-token context. The previous default, `e2ee-gemma-4-31b`, is no longer in the Venice model list. Existing installs still set to that ID get a repair pointing at the new default.
 
-For reasoning models like Venice Reasoning (qwen-2.5-qwq-32b) or DeepSeek R1 671B, you can disable thinking for lower latency by enabling the "Disable thinking" option in the configuration.
+Thinking is disabled by default so reasoning models stay fast enough for Assist. Turn **Disable thinking** off in the integration options if you want the model to reason before answering.
 
 ## Operations
 
