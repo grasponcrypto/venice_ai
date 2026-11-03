@@ -9,7 +9,7 @@ UPDATE_INTERVAL = timedelta(hours=12)
 
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
-RECOMMENDED_CHAT_MODEL = "e2ee-gemma-4-31b"  # Venice AI default model with function calling support
+RECOMMENDED_CHAT_MODEL = "deepseek-v4-1-flash-1017-uncensored"  # Venice traits: default + function_calling_default
 CONF_MAX_TOKENS = "max_tokens"
 RECOMMENDED_MAX_TOKENS = 512
 CONF_TOP_P = "top_p"

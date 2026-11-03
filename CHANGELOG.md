@@ -6,6 +6,13 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+### Changed
+- Default chat model is now `deepseek-v4-1-flash-1017-uncensored`, the model Venice marks as `default` and `function_calling_default`. `e2ee-gemma-4-31b` is retired and raises a repair pointing at the new default.
+
+### Fixed
+- Config and re-auth flows pass Home Assistant's shared HTTP client, so certificate loading does not block the event loop.
+- Options copy and the README match the unfiltered text-model list and the actions this branch actually registers.
+
 ## [1.1.0-dev.3] - 2026-11-02
 
 ### Fixed

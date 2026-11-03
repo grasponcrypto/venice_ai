@@ -30,7 +30,7 @@
       "step": {
         "init": {
           "title": "Venice AI Options",
-          "description": "Configure Venice AI settings. Only models with function calling support are shown.",
+          "description": "Configure Venice AI settings. Every text model returned by Venice AI is listed.",
           "data": {
             "chat_model": "AI Model",
             "prompt": "System Prompt",
@@ -50,7 +50,7 @@
             "stream_response": "Stream response"
           },
           "data_description": {
-            "chat_model": "Chat model used for conversation. Only models that support function calling are listed.",
+            "chat_model": "Chat model used for conversation. Every text model returned by Venice AI is listed. Device control needs a model that can call tools.",
             "prompt": "Instructions sent with every conversation. Home Assistant adds entity state and tool instructions.",
             "llm_hass_api": "Home Assistant APIs this assistant may use to control devices. Leave empty to disable control.",
             "temperature": "Higher values make replies more varied. Range 0 to 2.",

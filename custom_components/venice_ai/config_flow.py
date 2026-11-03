@@ -130,7 +130,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _LOGGER.debug("Validating Venice AI API key by fetching models")
-                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                async with AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY],
+                    http_client=get_async_client(self.hass),
+                ) as client:
                     models_response = await client.models.list()
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
@@ -174,7 +177,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _LOGGER.debug("Validating new Venice AI API key for re-auth")
-                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                async with AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY],
+                    http_client=get_async_client(self.hass),
+                ) as client:
                     models_response = await client.models.list()
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
@@ -814,6 +820,16 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             suggested_values[CONF_LLM_HASS_API] = [_llm_val] if _llm_val else []
         if user_input is not None:
             suggested_values.update(user_input)
+
+        # A retired model id is not in the live dropdown. Home Assistant
+        # rejects a suggested select value that is not an option, which
+        # blocks this form. Pre-select a model that is actually listed.
+        chat_ids = {opt.get("value") for opt in chat_options}
+        if chat_ids and suggested_values.get(CONF_CHAT_MODEL) not in chat_ids:
+            if RECOMMENDED_CHAT_MODEL in chat_ids:
+                suggested_values[CONF_CHAT_MODEL] = RECOMMENDED_CHAT_MODEL
+            else:
+                suggested_values[CONF_CHAT_MODEL] = next(iter(chat_ids))
 
         # Always resolve the combined TTS field last so it reflects the correct
         # pre-selection regardless of what was merged above.
