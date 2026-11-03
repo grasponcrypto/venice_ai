@@ -34,11 +34,17 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import conversation
 
-# Conditional import for ai_task (availability depends on HA version)
+# Conditional import for ai_task (availability depends on HA version).
+# Bind it under another name. Loading this integration's ai_task platform
+# sets custom_components.venice_ai.ai_task, which would replace a binding
+# named ai_task. The service would then look up GenDataTask on the platform
+# module and crash with "has no attribute 'GenDataTask'".
 try:
-    from homeassistant.components import ai_task
+    from homeassistant.components import ai_task as ha_ai_task
+
     _HAS_AI_TASK = True
 except ImportError:
+    ha_ai_task = None  # type: ignore[assignment]
     _HAS_AI_TASK = False
 
 from .ai_task_support import build_gen_data_task
@@ -289,8 +295,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 # requires ``name``; constructing it above this try raised
                 # TypeError, which Developer Tools reports as Unknown error
                 # and which never reached record_error.
+                # ha_ai_task is the core module, not this integration's platform.
+                if ha_ai_task is None:
+                    raise HomeAssistantError("AI Task is not available")
                 gen_task = build_gen_data_task(
-                    ai_task.GenDataTask,
+                    ha_ai_task.GenDataTask,
                     task_text,
                     structure,
                 )

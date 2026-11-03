@@ -13,6 +13,13 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Config and re-auth flows pass Home Assistant's shared HTTP client, so certificate loading does not block the event loop.
 - Options copy and the README match the unfiltered text-model list and the actions this branch actually registers.
 
+## [1.1.0-dev.4] - 2026-11-03
+
+### Fixed
+- **AI Task action:** Loading the AI Task platform replaced Home Assistant's `ai_task` module with this integration's platform module. `venice_ai.ai_task` then crashed with `module 'custom_components.venice_ai.ai_task' has no attribute 'GenDataTask'`. The service now keeps a separate reference to Home Assistant's class.
+- **STT state:** Assist calls `async_process_audio_stream` directly, so Home Assistant never replaced the old model-id state. That restored value is what the device page showed as Invalid timestamp. A non-timestamp state is cleared on startup, and a transcription records the time itself. The model stays an entity attribute.
+- **TTS model:** The text-to-speech entity now shows the configured model as an attribute, the same way speech-to-text does. The state stays the last spoken time.
+
 ## [1.1.0-dev.3] - 2026-11-02
 
 ### Fixed
@@ -113,7 +120,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...HEAD
+[1.1.0-dev.4]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...1.1.0-dev.4
 [1.1.0-dev.3]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.2...1.1.0-dev.3
 [1.1.0-dev.2]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.1...1.1.0-dev.2
 [1.1.0-dev.1]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev...1.1.0-dev.1

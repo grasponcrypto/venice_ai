@@ -70,6 +70,17 @@ class VeniceAITTS(TextToSpeechEntity):
         return self._name
 
     @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Return the configured model.
+
+        Home Assistant owns text-to-speech state and stores the last spoken
+        time there. The model is an attribute, the same place speech-to-text
+        shows it.
+        """
+        model = self._config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        return {"model": str(model or RECOMMENDED_TTS_MODEL)}
+
+    @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
         # Venice AI kokoro TTS supports multiple languages via different voice sets
