@@ -70,8 +70,18 @@
         }
       },
       "error": {
+        "invalid_auth": "Invalid API key",
+        "cannot_connect": "Failed to connect to Venice AI",
+        "unknown": "Unexpected error",
+        "missing_api_key": "No API key is stored for this entry. Reconfigure Venice AI and enter the key again.",
         "invalid_tts_voice_for_model": "The selected voice entry is invalid. Please select a valid 'Model → Voice' entry from the list.",
-        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
+        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable.",
+        "max_tokens_out_of_range": "Max tokens must be between 1 and 32768.",
+        "top_p_out_of_range": "Top P must be between 0 and 1.",
+        "temperature_out_of_range": "Temperature must be between 0 and 2.",
+        "max_tool_iterations_out_of_range": "Max tool iterations must be between 1 and 20.",
+        "tts_speed_out_of_range": "TTS speed must be between 0.25 and 4.",
+        "prompt_must_be_string": "The system prompt must be text."
       }
     },
     "entity": {

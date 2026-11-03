@@ -24,7 +24,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import VeniceAIMetrics
-from .const import DOMAIN
+from .const import DEVICE_MODEL, DOMAIN
 
 if TYPE_CHECKING:
     from . import VeniceAIRuntimeData
@@ -125,6 +125,7 @@ class VeniceAIUsageSensor(SensorEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
+            model=DEVICE_MODEL,
         )
 
     async def async_added_to_hass(self) -> None:

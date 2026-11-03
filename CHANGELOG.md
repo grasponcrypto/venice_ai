@@ -13,6 +13,13 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Config and re-auth flows pass Home Assistant's shared HTTP client, so certificate loading does not block the event loop.
 - Options copy and the README match the unfiltered text-model list and the actions this branch actually registers.
 
+## [1.1.0-dev.5] - 2026-11-03
+
+### Fixed
+- **Options form:** Range and auth failures used error keys that were not in `options.error`, so the form could show a blank message. Those keys now have copy, including a missing API key.
+- **Device page:** Conversation, speech, task, and sensor entities share one device but each reported a different model. The device model is now `Venice AI` on every platform. Text-to-speech is named TTS, the same pattern speech-to-text already uses.
+- **Retries:** A failed request is closed before the next attempt, including when the error body cannot be read. That returns the connection to the pool.
+
 ## [1.1.0-dev.4] - 2026-11-03
 
 ### Fixed
@@ -120,7 +127,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...HEAD
+[1.1.0-dev.5]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...1.1.0-dev.5
 [1.1.0-dev.4]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...1.1.0-dev.4
 [1.1.0-dev.3]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.2...1.1.0-dev.3
 [1.1.0-dev.2]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.1...1.1.0-dev.2

@@ -3,6 +3,9 @@
 from datetime import timedelta
 
 DOMAIN = "venice_ai"
+# One model for every platform. They share a device id, so different model
+# strings make the device page flip between Conversation, TTS, STT, and AI Task.
+DEVICE_MODEL = "Venice AI"
 
 # Coordinator refresh interval — must be a timedelta for DataUpdateCoordinator
 UPDATE_INTERVAL = timedelta(hours=12)

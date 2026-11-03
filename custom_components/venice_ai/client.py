@@ -986,11 +986,26 @@ class AsyncVeniceAIClient:
 
                 if response.status_code in retryable_statuses:
                     if attempt < MAX_RETRIES:
-                        # Fully consume response body to free connection before retry
+                        # Read and close before the next attempt. aread() alone
+                        # does not release the connection if the body read fails.
                         try:
                             await response.aread()
                         except Exception:
-                            pass
+                            _LOGGER.debug(
+                                "Could not read retry response body for %s %s",
+                                method,
+                                endpoint,
+                                exc_info=True,
+                            )
+                        try:
+                            await response.aclose()
+                        except Exception:
+                            _LOGGER.debug(
+                                "Could not close retry response for %s %s",
+                                method,
+                                endpoint,
+                                exc_info=True,
+                            )
                         delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
                         _LOGGER.warning(
                             "[PERF-HTTP] %s %s → HTTP %d in %.3fs; retrying in %.1fs (attempt %d/%d)",

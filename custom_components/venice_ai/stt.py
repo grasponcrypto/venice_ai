@@ -22,6 +22,7 @@ from .const import (
     CONF_STT_MODEL,
     CONF_STT_RESPONSE_FORMAT,
     CONF_STT_TIMESTAMPS,
+    DEVICE_MODEL,
     DOMAIN,
     MAX_STT_BUFFER_SIZE,
     RECOMMENDED_STT_MODEL,
@@ -115,7 +116,7 @@ class VeniceAISTT(SpeechToTextEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
-            model="STT",
+            model=DEVICE_MODEL,
             entry_type=dr.DeviceEntryType.SERVICE,
         )
 

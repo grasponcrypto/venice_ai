@@ -20,6 +20,7 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
+    DEVICE_MODEL,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
@@ -89,7 +90,7 @@ else:
                 identifiers={(DOMAIN, entry.entry_id)},
                 name=entry.title,
                 manufacturer="Venice AI",
-                model="AI Task",
+                model=DEVICE_MODEL,
                 entry_type=dr.DeviceEntryType.SERVICE,
             )
             # Fix 6: delegate API calls through the service layer so retry

@@ -27,6 +27,7 @@ from .const import (
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
     CONF_TTS_VOICE,
+    DEVICE_MODEL,
     DOMAIN,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_RESPONSE_FORMAT,
@@ -50,24 +51,21 @@ async def async_setup_entry(
 class VeniceAITTS(TextToSpeechEntity):
     """Venice AI TTS entity."""
 
+    _attr_has_entity_name = True
+    _attr_name = "TTS"
+
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize TTS entity."""
         self._client = config_entry.runtime_data.client
         self._config_entry = config_entry
-        self._name = "Venice AI TTS"
         self._attr_unique_id = f"{config_entry.entry_id}_tts"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, config_entry.entry_id)},
             name=config_entry.title,
             manufacturer="Venice AI",
-            model="TTS",
+            model=DEVICE_MODEL,
             entry_type=dr.DeviceEntryType.SERVICE,
         )
-
-    @property
-    def name(self) -> str:
-        """Friendly name for entity listing."""
-        return self._name
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:

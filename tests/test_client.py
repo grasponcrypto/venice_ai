@@ -426,3 +426,68 @@ class TestStreamingChatMetrics:
         assert api.metrics.error_count == 0
         assert http.response.closed is True
 
+
+class _RetryResponse:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        self.read = False
+        self.closed = False
+
+    async def aread(self) -> bytes:
+        self.read = True
+        return b""
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _BrokenReadResponse(_RetryResponse):
+    async def aread(self) -> bytes:
+        raise RuntimeError("truncated")
+
+
+class _RetryHttp:
+    def __init__(self, responses: list[_RetryResponse]) -> None:
+        self.responses = responses
+        self.calls = 0
+
+    async def request(self, method: str, url: str, **kwargs):
+        response = self.responses[self.calls]
+        self.calls += 1
+        return response
+
+
+class TestRetryReleasesResponse:
+    async def test_failed_attempt_is_closed_before_retry(self, monkeypatch) -> None:
+        async def _no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(client.asyncio, "sleep", _no_sleep)
+        failed = _RetryResponse(503)
+        ok = _RetryResponse(200)
+        http = _RetryHttp([failed, ok])
+        api = client.AsyncVeniceAIClient("key", http_client=http)
+
+        response = await api._async_request_with_retry("GET", "/models")
+
+        assert response is ok
+        assert failed.read is True
+        assert failed.closed is True
+        assert ok.closed is False
+
+    async def test_close_still_runs_when_body_read_fails(self, monkeypatch) -> None:
+        async def _no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(client.asyncio, "sleep", _no_sleep)
+        failed = _BrokenReadResponse(429)
+        ok = _RetryResponse(200)
+        http = _RetryHttp([failed, ok])
+        api = client.AsyncVeniceAIClient("key", http_client=http)
+
+        response = await api._async_request_with_retry("GET", "/models")
+
+        assert response is ok
+        assert failed.closed is True
+        assert ok.closed is False
+

@@ -44,6 +44,7 @@ from .const import (
     RECOMMENDED_DISABLE_THINKING,
     CONF_STREAM_RESPONSE,
     RECOMMENDED_STREAM_RESPONSE,
+    DEVICE_MODEL,
     DOMAIN,
     MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
@@ -356,7 +357,7 @@ class VeniceAIConversationEntity(ConversationEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
-            model="Conversation",
+            model=DEVICE_MODEL,
             entry_type=dr.DeviceEntryType.SERVICE,
         )
         # MED-2: cache compiled Template objects keyed by their source string so

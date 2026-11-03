@@ -3,8 +3,8 @@
 These tests exercise the schema-conversion helpers in ``conversation.py``:
 
 * ``_format_venice_schema`` — produces Venice-compatible OpenAPI schemas.
-* ``_convert_schema_to_hashable`` — converts voluptuous schemas into a
-  hashable representation suitable for ``voluptuous_openapi.convert``.
+* ``_convert_schema_to_hashable`` — unwraps selector keys and values into
+  plain dicts and lists that ``voluptuous_openapi.convert`` can walk.
 
 Rather than importing ``conversation.py`` directly (which transitively
 imports Home Assistant and is not available in a plain unit-test
@@ -123,18 +123,15 @@ class TestFormatVeniceSchema:
 
 
 class TestConvertSchemaToHashable:
-    """Validate the hashable conversion used by ``voluptuous_openapi``."""
+    """Validate the selector unwrap used before ``voluptuous_openapi``."""
 
-    def test_dict_becomes_frozenset_of_items(self) -> None:
+    def test_dict_keeps_plain_keys(self) -> None:
         result = _convert_schema_to_hashable({"a": str})
-        assert isinstance(result, frozenset)
-        members = list(result)
-        assert ("a", str) in members
+        assert result == {"a": str}
 
-    def test_list_becomes_tuple(self) -> None:
+    def test_list_stays_a_list(self) -> None:
         result = _convert_schema_to_hashable([str, int])
-        assert isinstance(result, tuple)
-        assert result == (str, int)
+        assert result == [str, int]
 
     def test_plain_type_passthrough(self) -> None:
         assert _convert_schema_to_hashable(str) is str
@@ -142,15 +139,10 @@ class TestConvertSchemaToHashable:
 
     def test_nested_dict_and_list(self) -> None:
         result = _convert_schema_to_hashable({"items": [str]})
-        assert isinstance(result, frozenset)
-        members = dict(result)
-        assert isinstance(members["items"], tuple)
-        assert members["items"] == (str,)
+        assert result == {"items": [str]}
 
     def test_empty_dict(self) -> None:
-        result = _convert_schema_to_hashable({})
-        assert isinstance(result, frozenset)
-        assert len(result) == 0
+        assert _convert_schema_to_hashable({}) == {}
 
 
 @pytest.mark.parametrize(
