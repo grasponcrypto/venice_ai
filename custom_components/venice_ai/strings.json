@@ -30,7 +30,7 @@
       "step": {
         "init": {
           "title": "Venice AI Options",
-          "description": "Configure Venice AI settings. Only models with function calling support are shown.",
+          "description": "Configure Venice AI settings. Every text model returned by Venice AI is listed.",
           "data": {
             "chat_model": "AI Model",
             "prompt": "System Prompt",

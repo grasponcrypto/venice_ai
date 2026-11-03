@@ -29,6 +29,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   current `(version=1, minor_version=1)` schema.
 
 ### Changed
+- Default chat model is now `deepseek-v4-1-flash-1017-uncensored`, the model Venice marks as `default` and `function_calling_default`. `e2ee-gemma-4-31b` is retired and raises a repair pointing at the new default.
 - **PERF-4:** Centralised HTTP timeout/keepalive defaults in
   `const.py` so they can be tuned without touching `client.py`.
 

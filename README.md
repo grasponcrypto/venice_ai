@@ -48,11 +48,11 @@ To configure the Venice AI integration:
 
 ## Models
 
-The Venice AI integration automatically filters and displays only models that support function calling, which is required for Home Assistant device control.
+The options flow lists every text model returned by Venice AI. It does not filter that list to models that support function calling. Device control still needs a model that can call tools, so choose one that does if you enable Control Home Assistant.
 
-The current default model is Llama 3.3 70B (llama-3.3-70b), which provides excellent function calling capabilities for smart home automation.
+The default chat model is `deepseek-v4-1-flash-1017-uncensored` (DeepSeek V4.1 Flash 1017 Uncensored). Venice marks that model as both `default` and `function_calling_default`. It supports tool calling, structured responses, and a 1M-token context. The previous default, `e2ee-gemma-4-31b`, is no longer in the Venice model list. Existing installs still set to that ID get a repair pointing at the new default.
 
-For reasoning models like Venice Reasoning (qwen-2.5-qwq-32b) or DeepSeek R1 671B, you can disable thinking for lower latency by enabling the "Disable thinking" option in the configuration.
+Thinking is disabled by default so reasoning models stay fast enough for Assist. Turn **Disable thinking** off in the integration options if you want the model to reason before answering.
 
 ## Operations
 
@@ -62,7 +62,10 @@ Once the integration is configured, the following surfaces are available:
 * **AI Task entity** — `ai_task.venice_ai_<entry_id>` exposes the model as a structured-data generator for dashboards, scripts, and automations.
 * **Text-to-speech** — A `tts.venice_ai_<entry_id>` entity streams synthesized speech from Venice's audio models for use with media players and announce automations.
 * **Sensor entity** — `sensor.venice_ai_<entry_id>` reports the latest request count, token usage, and the most recent error message. Useful for dashboarding and HA statistics.
-* **Coordinator refresh** — A `venice_ai.refresh_data` action lets you trigger an immediate data refresh on demand.
+* **Generate image** — `venice_ai.generate_image` creates an image and returns the Venice result. Required fields are the config entry and `prompt`. Optional fields are `size` (`1024x1024`, `1024x1792`, or `1792x1024`; default `1024x1024`), `quality` (`standard` or `hd`; default `standard`), and `style` (`vivid` or `natural`; default `vivid`).
+* **AI Task action** — `venice_ai.ai_task` generates structured data and returns `conversation_id` and `data`. It is registered when the AI Task platform is available. Required fields are the config entry and `task`. `structure` is optional and describes the expected response schema.
+
+There is no `venice_ai.refresh_data` action.
 
 ### Reconfiguration
 
@@ -80,8 +83,8 @@ From Settings → Devices & Services → Venice AI, click the three-dot menu and
 | `429 Rate limit exceeded` | Venice is throttling the account | Lower request concurrency, reduce prompt size, or upgrade the Venice plan. |
 | `5xx Service Unavailable` | Venice upstream incident | The integration retries with backoff; verify status on the Venice dashboard before opening an issue. |
 | `Connection refused` / `Timeout` | Network egress is blocked from Home Assistant to `api.venice.ai` | Allow outbound HTTPS to `api.venice.ai` on port 443. |
-| `No models returned` during setup | Venice account has no function-calling-capable models, or the API key is scoped too narrowly | Confirm the key has the `models:read` and `chat:write` scopes in your Venice account. |
-| Agent never responds | Selected model does not support tool calling | Pick a function-calling-capable model — the integration filters the model list to these by default. |
+| `No models returned` during setup | Venice returned an empty model list, or the API key cannot list models | Confirm the key is valid and can list models, then retry setup. |
+| Agent never responds | Selected model does not support tool calling | Pick a model that supports function calling. The options list includes every text model and is not filtered to tool-capable models. |
 | Reasoning model is very slow / verbose | Thinking tokens are being emitted alongside the answer | Enable **Disable thinking** in the integration options to skip reasoning output for faster responses. |
 | TTS produces no audio | Selected voice model is unavailable for the chosen language, or audio playback is muted on the target media player | Pick another voice model in the TTS entity options and confirm the target media player is not muted. |
 

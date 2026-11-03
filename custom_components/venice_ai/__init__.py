@@ -79,13 +79,11 @@ _ISSUE_AUTH = "auth_failure_{entry_id}"
 _ISSUE_API_DOWN = "api_unavailable_{entry_id}"
 _ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
 
-# Map deprecated model IDs → recommended replacements (update as needed).
-# Currently empty: no Venice AI models have been deprecated in the v1 API
-# roster.  Populate this dict when Venice AI announces retirements, e.g.:
-#   _DEPRECATED_MODELS = {"llama-2-70b": "llama-3.3-70b"}
-# LOW-1: kept intentionally to preserve the model-check repair-issue loop;
-# removing the dict would break the _async_create_model_issues code path.
-_DEPRECATED_MODELS: dict[str, str] = {}
+# Retired model IDs → recommended replacements. Existing entries still using
+# a retired ID get a repair issue instead of failing tool calls with no hint.
+_DEPRECATED_MODELS: dict[str, str] = {
+    "e2ee-gemma-4-31b": RECOMMENDED_CHAT_MODEL,
+}
 
 
 @dataclass
