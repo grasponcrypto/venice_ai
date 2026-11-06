@@ -184,43 +184,142 @@ def _format_venice_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
-    """Convert tool parameters schema to Venice-compatible format."""
-    if not tool.parameters:
+def _is_probatio_schema(parameters: Any) -> bool:
+    """Return True when parameters is a probatio schema object."""
+    module = type(parameters).__module__
+    return module == "probatio" or module.startswith("probatio.")
+
+
+def _ensure_schema_types(sub_schema: dict[str, Any]) -> None:
+    """Fill missing JSON Schema types that Venice rejects."""
+    properties = sub_schema.get("properties")
+    if not isinstance(properties, dict):
+        return
+    for prop in properties.values():
+        if not isinstance(prop, dict):
+            continue
+        if "type" not in prop:
+            if "properties" in prop:
+                prop["type"] = "object"
+            elif "enum" in prop:
+                prop["type"] = "string"
+            else:
+                prop["type"] = "string"
+        _ensure_schema_types(prop)
+
+
+def _normalize_tool_schema(schema: Any) -> dict[str, Any] | None:
+    """Return an object schema, or None when the converter produced nothing usable."""
+    if isinstance(schema, list):
+        schema = schema[0] if schema else None
+    if not isinstance(schema, dict) or not schema:
+        return None
+    if "properties" in schema or schema.get("type") == "object":
+        normalized = dict(schema)
+        normalized.setdefault("type", "object")
+        normalized.setdefault("properties", {})
+        _ensure_schema_types(normalized)
+        return normalized
+    if all(isinstance(value, dict) for value in schema.values()):
+        normalized = {"type": "object", "properties": schema}
+        _ensure_schema_types(normalized)
+        return normalized
+    return None
+
+
+def _schema_from_voluptuous(
+    parameters: Any, custom_serializer: Any
+) -> dict[str, Any] | None:
+    """Convert a voluptuous schema, including selector keys, without rewriting it first."""
+    try:
+        if custom_serializer is not None:
+            try:
+                converted = voluptuous_convert(
+                    parameters, custom_serializer=custom_serializer
+                )
+            except TypeError:
+                converted = voluptuous_convert(parameters)
+        else:
+            converted = voluptuous_convert(parameters)
+    except Exception:
+        _LOGGER.debug("voluptuous_openapi could not convert tool schema", exc_info=True)
+        return None
+    return _normalize_tool_schema(converted)
+
+
+def _schema_from_probatio(
+    parameters: Any, custom_serializer: Any
+) -> dict[str, Any] | None:
+    """Convert a probatio.Schema the way current Home Assistant exposes tools."""
+    try:
+        import probatio
+    except ImportError:
+        return None
+    attempts: list[dict[str, Any]] = []
+    if custom_serializer is not None:
+        attempts.append(
+            {
+                "custom_serializer": custom_serializer,
+                "openapi_version": "3.1.0",
+            }
+        )
+    attempts.append({"openapi_version": "3.1.0"})
+    attempts.append({})
+    last_error: Exception | None = None
+    for kwargs in attempts:
+        try:
+            converted = probatio.to_openapi(parameters, **kwargs)
+        except TypeError as err:
+            last_error = err
+            continue
+        except Exception:
+            _LOGGER.debug("probatio could not convert tool schema", exc_info=True)
+            return None
+        return _normalize_tool_schema(converted)
+    if last_error is not None:
+        _LOGGER.debug("probatio.to_openapi signature mismatch: %s", last_error)
+    return None
+
+
+def _convert_tool_parameters(
+    tool: llm.Tool, custom_serializer: Any = None
+) -> dict[str, Any] | None:
+    """Convert tool parameters to the object schema Venice expects.
+
+    Current Home Assistant tools are ``probatio.Schema`` objects.
+    ``voluptuous_openapi.convert`` does not understand those, and rewriting
+    the schema before conversion drops selector keys. Try the converter that
+    matches the object, and pass the LLM API's selector serializer so entity
+    selectors keep their format.
+    """
+    parameters = getattr(tool, "parameters", None)
+    if not parameters:
         return None
 
-    try:
-        hashable = _convert_schema_to_hashable(tool.parameters)
-        parameters_schema = voluptuous_convert(hashable)
-        # voluptuous_openapi may return list for 'anyOf' patterns; simplify
-        if isinstance(parameters_schema, list):
-            parameters_schema = parameters_schema[0]
-        if isinstance(parameters_schema, dict) and "properties" in parameters_schema:
-            def _ensure_types(sub_schema: dict[str, Any]) -> None:
-                if "properties" in sub_schema:
-                    for _, prop in sub_schema["properties"].items():
-                        if isinstance(prop, dict):
-                            if "type" not in prop:
-                                if "properties" in prop:
-                                    prop["type"] = "object"
-                                elif "enum" in prop:
-                                    prop["type"] = "string"
-                                else:
-                                    prop["type"] = "string"
-                            _ensure_types(prop)
+    if _is_probatio_schema(parameters):
+        schema = _schema_from_probatio(parameters, custom_serializer)
+        if schema is not None:
+            return schema
 
-            _ensure_types(parameters_schema)
-            return parameters_schema
-        if isinstance(parameters_schema, dict):
-            return {"type": "object", "properties": parameters_schema}
-        _LOGGER.warning(
-            "Unexpected schema type from voluptuous_openapi: %s",
-            type(parameters_schema).__name__,
-        )
-        return {"type": "object", "properties": {}}
-    except Exception as err:
-        _LOGGER.error("Failed to convert schema: %s", err, exc_info=True)
-        return {"type": "object", "properties": {}}
+    schema = _schema_from_voluptuous(parameters, custom_serializer)
+    if schema is not None:
+        return schema
+
+    if not _is_probatio_schema(parameters):
+        schema = _schema_from_probatio(parameters, custom_serializer)
+        if schema is not None:
+            return schema
+
+    if isinstance(parameters, dict):
+        formatted = _format_venice_schema(parameters)
+        if formatted:
+            return {"type": "object", "properties": formatted}
+
+    _LOGGER.warning(
+        "Could not convert parameters for tool %s; sending an empty object schema",
+        getattr(tool, "name", "?"),
+    )
+    return {"type": "object", "properties": {}}
 
 
 def _tool_result_data(result: Any) -> Any:
@@ -265,49 +364,183 @@ def _make_tool_result_content(
         return ToolResultContent(tool_call_id=call_id, tool_result=data)
 
 
+def _decode_legacy_tool_payload(raw: str) -> tuple[str, list[dict[str, Any]] | None]:
+    """Unpack an assistant message that stored tool calls as JSON in content.
+
+    Only a payload with a ``tool_calls`` list is treated as metadata. Ordinary
+    JSON replies stay as assistant text.
+    """
+    stripped = raw.strip()
+    if not stripped.startswith("{"):
+        return raw, None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return raw, None
+    if not isinstance(payload, dict) or not isinstance(payload.get("tool_calls"), list):
+        return raw, None
+    text = payload.get("text") or ""
+    if not isinstance(text, str):
+        text = str(text)
+    return text, payload["tool_calls"]
+
+
+def _venice_tool_calls_from_inputs(tool_inputs: Any) -> list[dict[str, Any]]:
+    """Convert Home Assistant tool-call inputs back to the Venice wire format."""
+    calls: list[dict[str, Any]] = []
+    for tool_input in tool_inputs:
+        args = getattr(tool_input, "tool_args", {}) or {}
+        if not isinstance(args, str):
+            try:
+                args = json.dumps(args)
+            except TypeError:
+                args = "{}"
+        calls.append(
+            {
+                "id": getattr(tool_input, "id", "") or "",
+                "type": "function",
+                "function": {
+                    "name": getattr(tool_input, "tool_name", "") or "",
+                    "arguments": args,
+                },
+            }
+        )
+    return calls
+
+
+def _tool_inputs_from_venice_calls(tool_calls: list[dict[str, Any]]) -> list[Any] | None:
+    """Build ToolInput objects, or None when this HA version cannot keep the call id."""
+    try:
+        tool_input_cls = llm.ToolInput
+    except AttributeError:
+        return None
+    inputs: list[Any] = []
+    for call in tool_calls:
+        func = call.get("function") or {}
+        name = func.get("name") or ""
+        raw_args = func.get("arguments", "{}")
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError:
+                args = {}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        call_id = call.get("id") or ""
+        try:
+            tool_input = tool_input_cls(id=call_id, tool_name=name, tool_args=args)
+        except TypeError:
+            return None
+        if getattr(tool_input, "id", None) != call_id:
+            return None
+        inputs.append(tool_input)
+    return inputs
+
+
+
+def _make_assistant_content(
+    text: str, tool_calls: list[dict[str, Any]] | None
+) -> AssistantContent:
+    """Store an assistant turn so the next request can replay tool calls.
+
+    Current Home Assistant keeps tool calls on ``AssistantContent.tool_calls``.
+    Older builds only have ``content``, so those still get the JSON payload.
+    """
+    if not tool_calls:
+        return AssistantContent(agent_id=DOMAIN, content=text)
+    tool_inputs = _tool_inputs_from_venice_calls(tool_calls)
+    if tool_inputs is not None:
+        try:
+            return AssistantContent(
+                agent_id=DOMAIN,
+                content=text or None,
+                tool_calls=tool_inputs,
+            )
+        except TypeError:
+            _LOGGER.debug(
+                "AssistantContent does not accept tool_calls; storing the legacy payload"
+            )
+    return AssistantContent(
+        agent_id=DOMAIN,
+        content=json.dumps({"text": text or "", "tool_calls": tool_calls}),
+    )
+
+
+def _user_message_already_present(chat_log: Any, text: str) -> bool:
+    """Return True when Home Assistant already logged this user turn.
+
+    ``ConversationEntity.async_process`` appends ``UserContent`` before the
+    agent runs. Appending it again sends the same sentence twice.
+    """
+    content = getattr(chat_log, "content", None) or []
+    for message in reversed(content):
+        if isinstance(message, UserContent) and getattr(message, "content", None) == text:
+            return True
+        if isinstance(message, (AssistantContent, ToolResultContent)):
+            return False
+    return False
+
+
+
 def _convert_chat_log_to_venice_messages(
     chat_log: ChatLog,
     system_prompt: str,
     strip_thinking: bool = False,
 ) -> list[dict[str, Any]]:
-    """Convert Home Assistant ChatLog to Venice AI message format."""
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+    """Convert Home Assistant ChatLog to Venice AI message format.
+
+    The system prompt Home Assistant already stored is sent once. Tool calls
+    are read from ``AssistantContent.tool_calls`` when present, and from the
+    older JSON content payload otherwise. Thinking tags are stripped from the
+    visible text only, after that payload has been decoded.
+    """
+    messages: list[dict[str, Any]] = []
+    seen_system: set[str] = set()
 
     for msg in chat_log.content:
         if isinstance(msg, UserContent):
             messages.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AssistantContent):
-            raw = _strip_thinking(msg.content) if strip_thinking else msg.content
-            # Try to decode JSON-encoded assistant messages that carry
-            # tool_calls metadata embedded during async_process.
-            tool_calls = None
-            try:
-                decoded = json.loads(raw)
-                if isinstance(decoded, dict) and "text" in decoded:
-                    raw = decoded["text"]
-                    tool_calls = decoded.get("tool_calls")
-            except (json.JSONDecodeError, TypeError):
-                tool_calls = None
-            assistant_msg: dict[str, Any] = {"role": "assistant", "content": raw}
+            raw = getattr(msg, "content", None) or ""
+            structured = getattr(msg, "tool_calls", None)
+            tool_calls = (
+                _venice_tool_calls_from_inputs(structured) if structured else None
+            )
+            if tool_calls:
+                text = raw
+            else:
+                text, tool_calls = _decode_legacy_tool_payload(raw)
+            if strip_thinking and text:
+                text = _strip_thinking(text)
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": text or ""}
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
             messages.append(assistant_msg)
         elif isinstance(msg, ToolResultContent):
+            if hasattr(msg, "result"):
+                payload = _tool_result_data(getattr(msg, "result", None))
+            else:
+                payload = getattr(msg, "tool_result", None)
             messages.append({
                 "role": "tool",
                 "tool_call_id": msg.tool_call_id,
-                "content": json.dumps(
-                    _tool_result_data(getattr(msg, "result", None))
-                    if hasattr(msg, "result")
-                    else msg.tool_result
-                ),
+                "content": json.dumps(payload),
             })
         elif isinstance(msg, SystemContent):
-            messages.append({"role": "system", "content": msg.content})
+            content = msg.content or ""
+            if not content.strip() or content in seen_system:
+                continue
+            seen_system.add(content)
+            messages.append({"role": "system", "content": content})
         else:
             _LOGGER.warning("Unsupported message type for Venice conversion: %s", type(msg))
+
+    if system_prompt and system_prompt not in seen_system:
+        messages.insert(0, {"role": "system", "content": system_prompt})
 
     return messages
 
@@ -454,7 +687,13 @@ class VeniceAIConversationEntity(ConversationEntity):
                 len(chat_log.content) if chat_log.content else 0,
             )
 
-        # Convert tools to Venice format
+        # Convert tools to Venice format. Pass the LLM API serializer so
+        # selector fields (entity, area, and so on) keep their schema.
+        custom_serializer = (
+            getattr(chat_log.llm_api, "custom_serializer", None)
+            if chat_log.llm_api is not None
+            else None
+        )
         venice_tools = []
         for tool in tools:
             tool_dict: dict[str, Any] = {
@@ -464,7 +703,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                     "description": tool.description,
                 },
             }
-            parameters_schema = _convert_tool_parameters(tool)
+            parameters_schema = _convert_tool_parameters(tool, custom_serializer)
             if parameters_schema is None and tool.parameters:
                 _LOGGER.warning(
                     "Could not format params for tool %s. Sending without params.", tool.name
@@ -491,10 +730,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                 [t["function"]["name"] for t in venice_tools],
             )
 
-        # The chat_log is passed in by HA's base class async_process.
-        # HA manages the chat session and history persistence.
-        # Append the new user message to the chat log.
-        chat_log.content.append(UserContent(content=user_input.text))
+        # Home Assistant already appends this user turn before the agent runs.
+        # Only add it when a caller handed us a log that does not contain it.
+        if not _user_message_already_present(chat_log, user_input.text):
+            chat_log.content.append(UserContent(content=user_input.text))
 
         assistant_response_content = None
         text_content = ""
@@ -745,18 +984,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                         assistant_response_content = text_content
                     break
 
-                # Store assistant message with tool call metadata encoded so
-                # _convert_chat_log_to_venice_messages can reconstruct the
-                # full assistant+tool_calls payload the API expects.
-                encoded_content = json.dumps({
-                    "text": text_content,
-                    "tool_calls": tool_calls,
-                })
-                assistant_content = AssistantContent(
-                    agent_id=DOMAIN,
-                    content=encoded_content,
-                )
-                chat_log.content.append(assistant_content)
+                # Keep tool calls on AssistantContent when this HA version supports
+                # that field, so the next request can replay the original call ids.
+                chat_log.content.append(_make_assistant_content(text_content, tool_calls))
 
                 _LOGGER.debug(
                     "[PERF] [+%.3fs] Tool call(s) requested (%d): %s - dispatching now",

@@ -6,10 +6,15 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+## [1.1.1-dev] - 2026-11-06
+
 ### Changed
 - Default chat model is now `deepseek-v4-1-flash-1017-uncensored`, the model Venice marks as `default` and `function_calling_default`. `e2ee-gemma-4-31b` is retired and raises a repair pointing at the new default.
 
 ### Fixed
+- Chat turns no longer send the system prompt and the user sentence twice. Home Assistant already logs both before the agent runs.
+- Tool calls keep their parameter schema and call id. Current Home Assistant tools are probatio schemas, and the next request replays `tool_calls` instead of a JSON blob in the assistant text.
+- Model lists are cached per API key. Setup, config, and re-auth always ask Venice, so another entry's cached list cannot accept a bad key.
 - Config and re-auth flows pass Home Assistant's shared HTTP client, so certificate loading does not block the event loop.
 - Options copy and the README match the unfiltered text-model list and the actions this branch actually registers.
 
@@ -133,7 +138,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.6...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev...HEAD
+[1.1.1-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.6...1.1.1-dev
 [1.1.0-dev.6]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...1.1.0-dev.6
 [1.1.0-dev.5]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...1.1.0-dev.5
 [1.1.0-dev.4]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...1.1.0-dev.4
