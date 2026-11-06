@@ -6,6 +6,11 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+## [1.1.1-dev.2] - 2026-11-06
+
+### Fixed
+- TTS options no longer fall back to `tts-kokoro` when the voice selector is omitted from a later save. The device page name and the TTS model / TTS voice diagnostics are rewritten from the saved option on reload, so they cannot keep showing the previous model.
+
 ## [1.1.1-dev] - 2026-11-06
 
 ### Changed
@@ -138,7 +143,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev.2...HEAD
+[1.1.1-dev.2]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev...1.1.1-dev.2
 [1.1.1-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.6...1.1.1-dev
 [1.1.0-dev.6]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...1.1.0-dev.6
 [1.1.0-dev.5]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...1.1.0-dev.5

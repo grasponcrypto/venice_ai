@@ -35,6 +35,7 @@ from .const import (
     RECOMMENDED_TTS_VOICE,
     configured_str,
 )
+from .entity_name import publish_configured_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +75,11 @@ class VeniceAITTS(TextToSpeechEntity):
         time there. The model is not a legal state value.
         """
         return f"TTS ({self._model()})"
+
+    async def async_added_to_hass(self) -> None:
+        """Replace a registry name left over from an older TTS model."""
+        await super().async_added_to_hass()
+        publish_configured_name(self)
 
     def _model(self) -> str:
         """Return the configured text-to-speech model."""

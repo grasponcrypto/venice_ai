@@ -300,13 +300,56 @@ def _build_combined_tts_options(
 def _parse_combined_tts_value(value: str) -> tuple[str, str] | None:
     """Split a 'model → voice' string into (model_id, voice).
 
+    The form uses `` → ``. A frontend or a pasted value may use ``-->``,
+    ``->``, or a bare arrow. Those still have to store the model the user
+    picked instead of falling through to ``tts-kokoro``.
+
     Returns ``None`` if the value cannot be parsed into two non-empty parts.
     """
-    if _TTS_MV_SEP in value:
-        model_id, _, voice = value.partition(_TTS_MV_SEP)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    for separator in (" → ", "-->", "->", "→", ">"):
+        if separator not in text:
+            continue
+        model_id, _, voice = text.partition(separator)
+        model_id = model_id.strip()
+        voice = voice.strip()
         if model_id and voice:
             return model_id, voice
     return None
+
+
+def _tts_pair_from_submission(
+    combined_value: object,
+    saved_options: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Return the model and voice that should be stored.
+
+    ``None`` means a value was submitted and could not be parsed. The caller
+    must show an error rather than store the kokoro default.
+
+    A missing value keeps the previously saved pair. Home Assistant omits an
+    optional selector the user did not touch. Treating that as "TTS not
+    selected" replaced ``tts-xai-v1`` with ``tts-kokoro`` whenever any other
+    option was saved.
+    """
+    if isinstance(combined_value, str) and combined_value.strip():
+        return _parse_combined_tts_value(combined_value)
+
+    saved_model = saved_options.get(CONF_TTS_MODEL)
+    saved_voice = saved_options.get(CONF_TTS_VOICE)
+    if (
+        isinstance(saved_model, str)
+        and saved_model.strip()
+        and isinstance(saved_voice, str)
+        and saved_voice.strip()
+    ):
+        return saved_model.strip(), saved_voice.strip()
+    return RECOMMENDED_TTS_MODEL, RECOMMENDED_TTS_VOICE
+
 
 
 def _resolve_combined_tts_value(
@@ -738,43 +781,31 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 errors.update(self._validate_numeric_options(user_input))
 
                 if not errors:
-                    # Parse the combined 'model → voice' selector value.
-                    # TTS is optional - if not provided, use defaults.
+                    # The combined selector is form-only. An omitted field must
+                    # keep the saved model and voice. Replacing them with the
+                    # kokoro default made the device page disagree with Options.
                     combined_value = user_input.get(_CONF_TTS_MODEL_VOICE)
-                    parsed = (
-                        _parse_combined_tts_value(combined_value)
-                        if isinstance(combined_value, str) and combined_value
-                        else None
+                    pair = _tts_pair_from_submission(
+                        combined_value, dict(self.config_entry.options)
                     )
-
-                    # Build the final options dict: remove the form-only combined key
-                    final_options = {
-                        k: v
-                        for k, v in user_input.items()
-                        if k != _CONF_TTS_MODEL_VOICE
-                    }
-
-                    if parsed is not None:
-                        tts_model, tts_voice = parsed
+                    if pair is None:
+                        errors["base"] = "invalid_tts_voice_for_model"
+                    else:
+                        tts_model, tts_voice = pair
+                        final_options = {
+                            k: v
+                            for k, v in user_input.items()
+                            if k != _CONF_TTS_MODEL_VOICE
+                        }
                         final_options[CONF_TTS_MODEL] = tts_model
                         final_options[CONF_TTS_VOICE] = tts_voice
-                        _LOGGER.debug(
+                        _LOGGER.info(
                             "Options saved: TTS model='%s', voice='%s'",
                             tts_model,
                             tts_voice,
                         )
-                    else:
-                        # TTS not selected - use defaults
-                        final_options[CONF_TTS_MODEL] = RECOMMENDED_TTS_MODEL
-                        final_options[CONF_TTS_VOICE] = RECOMMENDED_TTS_VOICE
-                        _LOGGER.debug(
-                            "TTS not selected, using defaults: model='%s', voice='%s'",
-                            RECOMMENDED_TTS_MODEL,
-                            RECOMMENDED_TTS_VOICE,
-                        )
-
-                    _LOGGER.debug("Final options to save: %s", final_options)
-                    return self.async_create_entry(title="", data=final_options)
+                        _LOGGER.debug("Final options to save: %s", final_options)
+                        return self.async_create_entry(title="", data=final_options)
             except Exception as err:
                 _LOGGER.exception("Error processing options: %s", err)
                 errors["base"] = "unknown"

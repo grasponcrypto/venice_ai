@@ -159,3 +159,18 @@ def test_tts_attribute_is_the_configured_model() -> None:
     }
     assert entity.name == "TTS (kokoro)"
 
+
+def test_registry_name_drops_a_stale_generated_model() -> None:
+    entity_name = load_component_module("entity_name")
+    assert entity_name.registry_name_updates(
+        "TTS (tts-kokoro)",
+        "TTS (tts-kokoro)",
+        "TTS (tts-xai-v1)",
+    ) == {"original_name": "TTS (tts-xai-v1)", "name": None}
+    assert entity_name.registry_name_updates(
+        "TTS (tts-xai-v1)",
+        "Kitchen voice",
+        "TTS (tts-xai-v1)",
+    ) == {}
+
+

@@ -27,10 +27,12 @@ from .client import VeniceAIMetrics
 from .const import (
     CONF_STT_MODEL,
     CONF_TTS_MODEL,
+    CONF_TTS_VOICE,
     DEVICE_MODEL,
     DOMAIN,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_VOICE,
     configured_str,
 )
 
@@ -126,6 +128,13 @@ async def async_setup_entry(
                 RECOMMENDED_TTS_MODEL,
                 "mdi:account-voice",
             ),
+            VeniceAIModelSensor(
+                entry,
+                "tts_voice",
+                CONF_TTS_VOICE,
+                RECOMMENDED_TTS_VOICE,
+                "mdi:account-voice",
+            ),
         ]
     )
 
@@ -212,3 +221,13 @@ class VeniceAIModelSensor(SensorEntity):
     def native_value(self) -> str:
         """Return the configured model."""
         return configured_str(self._entry.options, self._option_key, self._default)
+
+    async def async_added_to_hass(self) -> None:
+        """Publish the current option.
+
+        The state is written once at setup. Saving Options reloads the entry,
+        which is the only time this value is allowed to change. Write it here
+        so a restored ``tts-kokoro`` cannot outlive the saved model.
+        """
+        await super().async_added_to_hass()
+        self.async_write_ha_state()

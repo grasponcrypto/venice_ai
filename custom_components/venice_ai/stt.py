@@ -31,6 +31,7 @@ from .const import (
     RECOMMENDED_STT_TIMESTAMPS,
     configured_str,
 )
+from .entity_name import publish_configured_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ class VeniceAISTT(SpeechToTextEntity):
         checking it. Older releases stored the model id there.
         """
         await super().async_internal_added_to_hass()
+        publish_configured_name(self)
         self._drop_non_timestamp_state()
 
     def _drop_non_timestamp_state(self) -> None:

@@ -51,6 +51,7 @@ def _load_config_flow_helpers() -> types.ModuleType:
     names_to_extract = {
         "_TTSModelInfo",
         "_parse_combined_tts_value",
+        "_tts_pair_from_submission",
         "_resolve_combined_tts_value",
         "_extract_tts_model_info",
         "_build_combined_tts_options",
@@ -157,6 +158,53 @@ class TestParseCombinedTTSValue:
         assert helpers._parse_combined_tts_value("no-separator") is None
         assert helpers._parse_combined_tts_value(" → voice") is None
         assert helpers._parse_combined_tts_value("model → ") is None
+
+    def test_accepts_ascii_arrows(self, helpers: types.ModuleType) -> None:
+        assert helpers._parse_combined_tts_value("tts-xai-v1 --> rigel") == (
+            "tts-xai-v1",
+            "rigel",
+        )
+        assert helpers._parse_combined_tts_value("tts-xai-v1 -> rigel") == (
+            "tts-xai-v1",
+            "rigel",
+        )
+
+
+class TestTTSPairFromSubmission:
+    """An omitted selector must not reset a saved voice to kokoro."""
+
+    def test_omitted_value_keeps_saved_pair(self, helpers: types.ModuleType) -> None:
+        assert helpers._tts_pair_from_submission(
+            None,
+            {CONF_TTS_MODEL: "tts-xai-v1", CONF_TTS_VOICE: "rigel"},
+        ) == ("tts-xai-v1", "rigel")
+
+    def test_empty_string_keeps_saved_pair(self, helpers: types.ModuleType) -> None:
+        assert helpers._tts_pair_from_submission(
+            "  ",
+            {CONF_TTS_MODEL: "tts-xai-v1", CONF_TTS_VOICE: "rigel"},
+        ) == ("tts-xai-v1", "rigel")
+
+    def test_submitted_ascii_arrow_is_stored(self, helpers: types.ModuleType) -> None:
+        assert helpers._tts_pair_from_submission(
+            "tts-xai-v1 --> rigel",
+            {CONF_TTS_MODEL: "tts-kokoro", CONF_TTS_VOICE: "bm_daniel"},
+        ) == ("tts-xai-v1", "rigel")
+
+    def test_unparseable_value_is_rejected(self, helpers: types.ModuleType) -> None:
+        assert (
+            helpers._tts_pair_from_submission(
+                "not-a-pair",
+                {CONF_TTS_MODEL: "tts-xai-v1", CONF_TTS_VOICE: "rigel"},
+            )
+            is None
+        )
+
+    def test_missing_saved_pair_uses_recommended(self, helpers: types.ModuleType) -> None:
+        assert helpers._tts_pair_from_submission(None, {}) == (
+            RECOMMENDED_TTS_MODEL,
+            RECOMMENDED_TTS_VOICE,
+        )
 
 
 class TestResolveCombinedTTSValue:

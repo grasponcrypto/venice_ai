@@ -109,6 +109,9 @@
         },
         "tts_model": {
           "name": "TTS model"
+        },
+        "tts_voice": {
+          "name": "TTS voice"
         }
       }
     },
