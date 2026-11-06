@@ -95,6 +95,22 @@ class TestVeniceConversationService:
         assert sent["top_p"] == 0.9
         assert sent["stream"] is False
 
+    async def test_chat_omits_null_optional_fields(self, make_client) -> None:
+        client = make_client(
+            non_streaming_response={"choices": [{"message": {"content": "ok"}}]}
+        )
+        service = VeniceConversationService(client)
+        await service.chat(
+            [{"role": "user", "content": "hi"}],
+            ChatParameters(model="venice-llm", max_tokens=512.0),
+        )
+        sent = client.chat.last_non_streaming_kwargs
+        assert "tools" not in sent
+        assert "top_p" not in sent
+        assert "venice_parameters" not in sent
+        assert sent["max_tokens"] == 512
+        assert sent["stream"] is False
+
     async def test_chat_stream_accumulates_content(self, make_client, chunk) -> None:
         chunks = [
             chunk({"content": "Hello"}),

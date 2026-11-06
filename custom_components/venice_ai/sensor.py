@@ -19,12 +19,20 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import VeniceAIMetrics
-from .const import DOMAIN
+from .const import (
+    CONF_STT_MODEL,
+    CONF_TTS_MODEL,
+    DEVICE_MODEL,
+    DOMAIN,
+    RECOMMENDED_STT_MODEL,
+    RECOMMENDED_TTS_MODEL,
+    configured_str,
+)
 
 if TYPE_CHECKING:
     from . import VeniceAIRuntimeData
@@ -41,7 +49,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="request_count",
         translation_key="request_count",
-        name="API requests",
         icon="mdi:api",
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -50,7 +57,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="error_count",
         translation_key="error_count",
-        name="API errors",
         icon="mdi:alert-circle",
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -59,7 +65,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="total_tokens",
         translation_key="total_tokens",
-        name="Total tokens",
         icon="mdi:counter",
         native_unit_of_measurement="tokens",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -69,7 +74,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="prompt_tokens",
         translation_key="prompt_tokens",
-        name="Prompt tokens",
         icon="mdi:counter",
         native_unit_of_measurement="tokens",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -79,7 +83,6 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="completion_tokens",
         translation_key="completion_tokens",
-        name="Completion tokens",
         icon="mdi:counter",
         native_unit_of_measurement="tokens",
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -89,10 +92,9 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
     VeniceAISensorDescription(
         key="last_error",
         translation_key="last_error",
-        name="Last error",
         icon="mdi:message-alert",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda m: m.last_error,
+        value_fn=lambda m: m.last_error or "none",
     ),
 )
 
@@ -105,8 +107,26 @@ async def async_setup_entry(
     """Set up Venice AI diagnostic sensors from a config entry."""
     runtime_data: VeniceAIRuntimeData = entry.runtime_data
     async_add_entities(
-        VeniceAIUsageSensor(entry, runtime_data, description)
-        for description in SENSORS
+        [
+            *(
+                VeniceAIUsageSensor(entry, runtime_data, description)
+                for description in SENSORS
+            ),
+            VeniceAIModelSensor(
+                entry,
+                "stt_model",
+                CONF_STT_MODEL,
+                RECOMMENDED_STT_MODEL,
+                "mdi:microphone",
+            ),
+            VeniceAIModelSensor(
+                entry,
+                "tts_model",
+                CONF_TTS_MODEL,
+                RECOMMENDED_TTS_MODEL,
+                "mdi:account-voice",
+            ),
+        ]
     )
 
 
@@ -114,7 +134,7 @@ class VeniceAIUsageSensor(SensorEntity):
     """A diagnostic sensor reporting a single Venice AI usage metric."""
 
     _attr_has_entity_name = True
-    _attr_should_poll = True
+    _attr_should_poll = False
     entity_description: VeniceAISensorDescription
 
     def __init__(
@@ -131,9 +151,64 @@ class VeniceAIUsageSensor(SensorEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
+            model=DEVICE_MODEL,
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to metric changes and publish the current value."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._metrics.add_listener(self._handle_metrics_update))
+        # Overwrite a restored "unknown" from an older build before the next request.
+        self.async_write_ha_state()
+
+    @callback
+    def _handle_metrics_update(self) -> None:
+        """Push the new counter. record_* runs on the event loop."""
+        if self.hass is None:
+            return
+        self.schedule_update_ha_state()
 
     @property
     def native_value(self) -> int | str | None:
         """Return the current metric value."""
         return self.entity_description.value_fn(self._metrics)
+
+
+class VeniceAIModelSensor(SensorEntity):
+    """Show a configured speech model as the entity state.
+
+    Speech-to-text and text-to-speech states are timestamps owned by Home
+    Assistant. The model cannot live there without the UI saying Invalid
+    timestamp, and an attribute is easy to miss on the device page.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        key: str,
+        option_key: str,
+        default: str,
+        icon: str,
+    ) -> None:
+        """Initialize the model sensor."""
+        self._entry = entry
+        self._option_key = option_key
+        self._default = default
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
+        self._attr_icon = icon
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Venice AI",
+            model=DEVICE_MODEL,
+        )
+
+    @property
+    def native_value(self) -> str:
+        """Return the configured model."""
+        return configured_str(self._entry.options, self._option_key, self._default)

@@ -62,8 +62,8 @@ Once the integration is configured, the following surfaces are available:
 * **AI Task entity** — `ai_task.venice_ai_<entry_id>` exposes the model as a structured-data generator for dashboards, scripts, and automations.
 * **Text-to-speech** — A `tts.venice_ai_<entry_id>` entity streams synthesized speech from Venice's audio models for use with media players and announce automations.
 * **Sensor entity** — `sensor.venice_ai_<entry_id>` reports the latest request count, token usage, and the most recent error message. Useful for dashboarding and HA statistics.
-* **Generate image** — `venice_ai.generate_image` creates an image and returns the Venice result. Required fields are the config entry and `prompt`. Optional fields are `size` (`1024x1024`, `1024x1792`, or `1792x1024`; default `1024x1024`), `quality` (`standard` or `hd`; default `standard`), and `style` (`vivid` or `natural`; default `vivid`).
-* **AI Task action** — `venice_ai.ai_task` generates structured data and returns `conversation_id` and `data`. It is registered when the AI Task platform is available. Required fields are the config entry and `task`. `structure` is optional and describes the expected response schema.
+* **Generate image** — `venice_ai.generate_image` calls Venice's image endpoint and returns base64 webp, not a URL. Required fields are the config entry, `prompt`, and `model`. Optional fields are `aspect_ratio`, `resolution`, `width`, and `height`, and they are sent only when that model lists them. `size`, `quality`, and `style` are not accepted.
+* **AI Task action** — `venice_ai.ai_task` generates structured data and returns `conversation_id` and `data`. It is registered when a config entry loads and the AI Task platform is available. Required fields are the config entry and `task`. `structure` is optional and describes the expected response schema.
 
 There is no `venice_ai.refresh_data` action.
 

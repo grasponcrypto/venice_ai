@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .client import AsyncVeniceAIClient
+from .client import AsyncVeniceAIClient, chat_completion_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -173,16 +173,19 @@ class VeniceConversationService:
         params: ChatParameters,
     ) -> dict[str, Any]:
         """Perform a non-streaming chat completion and return the raw response."""
-        return await self._client.chat.create_non_streaming(
-            model=params.model,
-            messages=messages,
-            max_tokens=params.max_tokens,
-            temperature=params.temperature,
-            top_p=params.top_p,
-            tools=params.tools or None,
-            venice_parameters=params.venice_parameters,
+        payload = chat_completion_payload(
+            {
+                "model": params.model,
+                "messages": messages,
+                "max_tokens": params.max_tokens,
+                "temperature": params.temperature,
+                "top_p": params.top_p,
+                "tools": params.tools or None,
+                "venice_parameters": params.venice_parameters,
+            },
             stream=False,
         )
+        return await self._client.chat.create_non_streaming(**payload)
 
     async def chat_stream(
         self,
@@ -234,7 +237,7 @@ class VeniceConversationService:
             async for chunk in stream:
                 # Capture token usage emitted in the final chunk
                 # (requires stream_options.include_usage=True on the request).
-                if chunk.usage:
+                if getattr(chunk, "usage", None):
                     result.usage = chunk.usage
                     _LOGGER.debug(
                         "[PERF] chat_stream — usage chunk received: prompt=%s completion=%s total=%s",

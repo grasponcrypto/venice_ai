@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
 
@@ -12,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import (
     HomeAssistant,
@@ -33,26 +34,35 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import conversation
 
-# Conditional import for ai_task (availability depends on HA version)
+# Conditional import for ai_task (availability depends on HA version).
+# Bind it under another name. Loading this integration's ai_task platform
+# sets custom_components.venice_ai.ai_task, which would replace a binding
+# named ai_task. The service would then look up GenDataTask on the platform
+# module and crash with "has no attribute 'GenDataTask'".
 try:
-    from homeassistant.components import ai_task
+    from homeassistant.components import ai_task as ha_ai_task
+
     _HAS_AI_TASK = True
 except ImportError:
+    ha_ai_task = None  # type: ignore[assignment]
     _HAS_AI_TASK = False
 
-from .client import AsyncVeniceAIClient, VeniceAIError, AuthenticationError
-
-# Backwards-compatible import: older client.py may not define RateLimitError
-try:
-    from .client import RateLimitError
-except ImportError:
-    RateLimitError = None  # type: ignore[misc, assignment]
+from .ai_task_support import build_gen_data_task
+from .client import (
+    IMAGE_GENERATE_FORMAT,
+    AsyncVeniceAIClient,
+    AuthenticationError,
+    ImageGenerateError,
+    RateLimitError,
+    VeniceAIError,
+    find_image_model,
+    image_model_constraints,
+)
 from .const import (
     CONF_CHAT_MODEL,
     CONF_TTS_MODEL,
     CONF_STT_MODEL,
     DOMAIN,
-    HAS_VOLUPTUOUS_OPENAPI,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_STT_MODEL,
@@ -107,13 +117,47 @@ class VeniceAIConfigEntry(ConfigEntry):
     runtime_data: VeniceAIRuntimeData
 
 
+async def _async_dispatch_ai_task(
+    hass: HomeAssistant,
+    entity: object,
+    gen_task: object,
+    task_text: str,
+    context: Any,
+) -> Any:
+    """Run a data task on the AI Task API this core actually provides.
+
+    2026.10 exposes ``internal_async_generate_data`` and builds the chat log
+    itself. Older cores still expect ``async_generate_data(task, chat_log)``.
+    """
+    internal = getattr(entity, "internal_async_generate_data", None)
+    if callable(internal):
+        from homeassistant.helpers.chat_session import async_get_chat_session
+
+        with async_get_chat_session(hass) as session:
+            if "context" in inspect.signature(internal).parameters:
+                return await internal(session, gen_task, context)
+            return await internal(session, gen_task)
+
+    chat_log = conversation.ChatLog(
+        conversation_id=str(uuid.uuid4()),
+        content=[conversation.UserContent(content=task_text)],
+    )
+    return await entity.async_generate_data(gen_task, chat_log)  # type: ignore[attr-defined]
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up Venice AI Conversation."""
-    if not HAS_VOLUPTUOUS_OPENAPI:
-        _LOGGER.debug(
-            "voluptuous-openapi is not installed. LLM tool schema conversion "
-            "will be limited. Install with: pip install voluptuous-openapi"
-        )
+    """Set up Venice AI Conversation.
+
+    Services are registered from ``async_setup_entry`` so they cannot be
+    called before a config entry has loaded.
+    """
+    return True
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register services once, when the first config entry loads."""
+    if hass.services.has_service(DOMAIN, SERVICE_GENERATE_IMAGE):
+        return
 
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with Venice AI."""
@@ -135,17 +179,40 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             )
 
         client: AsyncVeniceAIClient = entry.runtime_data.client
+        model_id = call.data["model"]
+        coordinator = entry.runtime_data.coordinator
+        image_models = []
+        if coordinator is not None and coordinator.data:
+            image_models = coordinator.data.get("image_models") or []
+        if not isinstance(image_models, list) or not image_models:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="image_models_unavailable",
+            )
+        model = find_image_model(image_models, model_id)
+        if model is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_image_model",
+                translation_placeholders={"model": model_id},
+            )
 
         try:
             response = await client.images.generate(
-                model="default",
-                prompt=call.data["prompt"],
-                size=call.data["size"],
-                quality=call.data["quality"],
-                style=call.data["style"],
-                response_format="url",
-                n=1,
+                model_id,
+                call.data["prompt"],
+                constraints=image_model_constraints(model),
+                aspect_ratio=call.data.get("aspect_ratio"),
+                resolution=call.data.get("resolution"),
+                width=call.data.get("width"),
+                height=call.data.get("height"),
             )
+        except ImageGenerateError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_image_request",
+                translation_placeholders={"reason": str(err)},
+            ) from err
         except VeniceAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
@@ -153,12 +220,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             raise HomeAssistantError(
                 f"Unexpected image API response type: {type(response).__name__}"
             )
-        data = response.get("data", [{}])
-        if not data or not isinstance(data, list) or len(data) < 1:
+        images = response.get("images")
+        if (
+            not isinstance(images, list)
+            or not images
+            or not isinstance(images[0], str)
+            or not images[0]
+        ):
+            if response.get("content_policy_violation_count"):
+                raise HomeAssistantError(
+                    "Venice AI rejected the image under its content policy"
+                )
             raise HomeAssistantError("No image data returned from Venice AI")
-        result = dict(data[0])
-        result.pop("b64_json", None)
-        return result
+        return {
+            "id": response.get("id"),
+            "model": model_id,
+            "format": IMAGE_GENERATE_FORMAT,
+            "image": images[0],
+        }
 
     # Only register AI Task service if platform is available
     if _HAS_AI_TASK:
@@ -211,31 +290,41 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             task_text = call.data["task"]
             structure = call.data.get("structure")
 
-            gen_task = ai_task.GenDataTask(
-                instructions=task_text,
-                structure=structure,
-            )
-
-            chat_log = conversation.ChatLog(
-                conversation_id=str(uuid.uuid4()),
-                content=[
-                    conversation.UserContent(content=task_text)
-                ]
-            )
-
             try:
-                # Call the public async_generate_data API instead of the
-                # private _async_generate_data method (CRIT-3 fix).  This
-                # respects the entity's public contract and avoids bypassing
-                # any locking or lifecycle checks the platform may add.
-                result = await ai_task_entity.async_generate_data(gen_task, chat_log)
+                # Build the task inside the handler. On 2026.10 GenDataTask
+                # requires ``name``; constructing it above this try raised
+                # TypeError, which Developer Tools reports as Unknown error
+                # and which never reached record_error.
+                # ha_ai_task is the core module, not this integration's platform.
+                if ha_ai_task is None:
+                    raise HomeAssistantError("AI Task is not available")
+                gen_task = build_gen_data_task(
+                    ha_ai_task.GenDataTask,
+                    task_text,
+                    structure,
+                )
+                result = await _async_dispatch_ai_task(
+                    hass,
+                    ai_task_entity,
+                    gen_task,
+                    task_text,
+                    call.context,
+                )
                 return {
                     "conversation_id": result.conversation_id,
                     "data": result.data,
                 }
             except asyncio.CancelledError:
                 raise
+            except HomeAssistantError:
+                raise
             except Exception as err:
+                metrics = getattr(
+                    getattr(entry.runtime_data, "client", None), "metrics", None
+                )
+                if metrics is not None:
+                    metrics.record_error(err)
+                _LOGGER.exception("Venice AI task failed")
                 raise HomeAssistantError(f"Error generating data: {err}") from err
 
         hass.services.async_register(
@@ -268,16 +357,35 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     }
                 ),
                 vol.Required("prompt"): cv.string,
-                vol.Optional("size", default="1024x1024"): vol.In(
-                    ("1024x1024", "1024x1792", "1792x1024")
+                vol.Required("model"): cv.string,
+                vol.Optional("aspect_ratio"): cv.string,
+                vol.Optional("resolution"): cv.string,
+                vol.Optional("width"): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=1280)
                 ),
-                vol.Optional("quality", default="standard"): vol.In(("standard", "hd")),
-                vol.Optional("style", default="vivid"): vol.In(("vivid", "natural")),
+                vol.Optional("height"): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=1280)
+                ),
             }
         ),
         supports_response=SupportsResponse.ONLY,
     )
-    return True
+
+
+def _async_unregister_services(hass: HomeAssistant) -> None:
+    """Remove services when the last config entry unloads."""
+    if hass.services.has_service(DOMAIN, SERVICE_GENERATE_IMAGE):
+        hass.services.async_remove(DOMAIN, SERVICE_GENERATE_IMAGE)
+    if hass.services.has_service(DOMAIN, SERVICE_AI_TASK):
+        hass.services.async_remove(DOMAIN, SERVICE_AI_TASK)
+
+
+def _has_other_loaded_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Return True if another Venice AI entry is still loaded."""
+    return any(
+        other.entry_id != entry.entry_id and other.state is ConfigEntryState.LOADED
+        for other in hass.config_entries.async_entries(DOMAIN)
+    )
 
 
 @callback
@@ -318,7 +426,7 @@ def _async_on_coordinator_update(
         # re-authentication dialog without requiring the user to manually
         # locate and act on the repair issue.
         entry.async_start_reauth(hass)
-    elif RateLimitError is not None and isinstance(cause, RateLimitError):
+    elif isinstance(cause, RateLimitError):
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -510,6 +618,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     _LOGGER.info("Successfully forwarded entry setups")
 
     await async_setup_repairs(hass, entry)
+    _async_register_services(hass)
     return True
 
 
@@ -522,31 +631,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
-    """MAINT-2: migrate config entries to the current version.
+    """Migrate config entries to the current version (1.1).
 
-    The ``version`` and ``minor_version`` keys on the config entry are
-    inspected by HA to decide whether ``async_migrate_entry`` needs to run.
-    Each migration should bump the version field once it completes so that
-    the migration runs exactly once per upgrade.
-
-    Currently the integration is at version 1 / minor 1, so this is the
-    canonical entry point for future upgrade logic. Returning ``True``
-    without bumping the version when there is nothing to do keeps the
-    method in place as a stable extension point.
+    Home Assistant calls this when the stored version does not match the
+    flow's ``VERSION`` / ``MINOR_VERSION``. A newer major version means the
+    install was downgraded; returning ``False`` refuses to load an entry this
+    code does not understand. Bumps go through ``async_update_entry`` so they
+    are persisted.
     """
     _LOGGER.debug(
-        "Migrating Venice AI entry %s from version %s.%s to current version 1.1",
+        "Migrating Venice AI entry %s from version %s.%s",
         entry.entry_id,
         entry.version,
         entry.minor_version,
     )
-    # No data migration required yet; the dict-based storage layout has been
-    # stable. Place future migrations (e.g. moving keys from data→options,
-    # renaming CONF_* constants) inside this function.
-    if entry.version > 1 or (entry.version == 1 and entry.minor_version >= 1):
+
+    if entry.version > 1:
+        return False
+
+    if entry.version < 1:
+        hass.config_entries.async_update_entry(entry, version=1, minor_version=1)
         return True
-    entry.version = 1
-    entry.minor_version = 1
+
+    if entry.version == 1 and entry.minor_version < 1:
+        # 1.0 -> 1.1. The stored layout is unchanged.
+        hass.config_entries.async_update_entry(entry, minor_version=1)
+
     return True
 
 
@@ -566,5 +676,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) ->
     # Explicitly close the async client — async_on_unload cannot await coroutines.
     client: AsyncVeniceAIClient = entry.runtime_data.client
     await client.close()
+
+    if unload_ok and not _has_other_loaded_entry(hass, entry):
+        _async_unregister_services(hass)
 
     return unload_ok

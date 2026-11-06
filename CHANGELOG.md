@@ -6,6 +6,54 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+### Changed
+- Default chat model is now `deepseek-v4-1-flash-1017-uncensored`, the model Venice marks as `default` and `function_calling_default`. `e2ee-gemma-4-31b` is retired and raises a repair pointing at the new default.
+
+### Fixed
+- Config and re-auth flows pass Home Assistant's shared HTTP client, so certificate loading does not block the event loop.
+- Options copy and the README match the unfiltered text-model list and the actions this branch actually registers.
+
+## [1.1.0-dev.6] - 2026-11-06
+
+### Fixed
+- **Speech models:** Home Assistant owns STT and TTS state and shows a timestamp, or Unknown until the next use. Putting the model id back in that state makes the device page say Invalid timestamp. The model is now in the entity name, the attributes, and a diagnostic sensor (`STT model`, `TTS model`). TTS also shows its voice as an attribute.
+- **AI Task action:** `venice_ai.ai_task` posted a non-streaming chat body that included null fields (`tools`, `top_p`, `venice_parameters`). Venice rejects that with HTTP 400 Invalid request parameters. Chat already omitted those fields and streams by default, which is why chat still worked. The task now uses that same request shape, including disable-thinking and the configured stream option. A 400 now includes the API's field details.
+
+## [1.1.0-dev.5] - 2026-11-03
+
+### Fixed
+- **Options form:** Range and auth failures used error keys that were not in `options.error`, so the form could show a blank message. Those keys now have copy, including a missing API key.
+- **Device page:** Conversation, speech, task, and sensor entities share one device but each reported a different model. The device model is now `Venice AI` on every platform. Text-to-speech is named TTS, the same pattern speech-to-text already uses.
+- **Retries:** A failed request is closed before the next attempt, including when the error body cannot be read. That returns the connection to the pool.
+
+## [1.1.0-dev.4] - 2026-11-03
+
+### Fixed
+- **AI Task action:** Loading the AI Task platform replaced Home Assistant's `ai_task` module with this integration's platform module. `venice_ai.ai_task` then crashed with `module 'custom_components.venice_ai.ai_task' has no attribute 'GenDataTask'`. The service now keeps a separate reference to Home Assistant's class.
+- **STT state:** Assist calls `async_process_audio_stream` directly, so Home Assistant never replaced the old model-id state. That restored value is what the device page showed as Invalid timestamp. A non-timestamp state is cleared on startup, and a transcription records the time itself. The model stays an entity attribute.
+- **TTS model:** The text-to-speech entity now shows the configured model as an attribute, the same way speech-to-text does. The state stays the last spoken time.
+
+## [1.1.0-dev.3] - 2026-11-02
+
+### Fixed
+- **STT state:** Home Assistant 2026.10 owns speech-to-text state and stores the last processed time there. Showing the model id in that state made the UI say Invalid timestamp after a successful transcription. The model is now an entity attribute. The state is left to Home Assistant.
+- **AI Task action:** `venice_ai.ai_task` built `GenDataTask` without the required `name` and built `ChatLog` with the old constructor. On 2026.10 that raised `TypeError` before the handler could record it, so Developer Tools showed Unknown error and Last error stayed `none`. The action now uses `internal_async_generate_data` when that API exists.
+
+## [1.1.0-dev.2] - 2026-11-02
+
+### Fixed
+- **Generate Image action:** The Actions form had no inputs, so a click failed with `required key not provided` for `config_entry` and `prompt`. Field selectors now live in `services.yaml`.
+- **STT row:** The speech-to-text entity is named STT and shows the configured model instead of Unknown.
+- **Last error:** An empty sensor state is still Home Assistant's Unknown. When nothing has failed, the sensor now reads `none`.
+
+## [1.1.0-dev.1] - 2026-11-02
+
+### Fixed
+- **#36:** Streaming chat, TTS, STT, and image generation now record diagnostic metrics. Previously only non-streaming chat did, so the sensors stayed at 0 while Stream response was on (the default). Last error shows blank when nothing has failed, instead of Home Assistant's "Unknown".
+- **Conversation entity:** Adopt the pre-0.9 agent (`unique_id` was the config entry id, name "VeniceAI Conversation") so Assist pipelines keep using it. If a newer agent already exists, pipelines that still name the old entity are pointed at the live one and the orphan is removed.
+
+## [1.1.0-dev] - 2026-11-01
+
 ### Added
 - **DOC-1:** Module-level docstrings on all public client classes
   (`AsyncVeniceAIClient`, `ChatCompletions`, `Models`, `Speech`,
@@ -29,11 +77,25 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   current `(version=1, minor_version=1)` schema.
 
 ### Changed
-- Default chat model is now `deepseek-v4-1-flash-1017-uncensored`, the model Venice marks as `default` and `function_calling_default`. `e2ee-gemma-4-31b` is retired and raises a repair pointing at the new default.
+- **#46:** `generate_image` calls native `POST /image/generate` and requires an image model id from the coordinator's `type=image` list. Optional `aspect_ratio`, `resolution`, `width`, and `height` are sent only when that model's constraints list them. The response is `{id, model, format, image}` where `image` is base64 webp, not an OpenAI-style URL.
 - **PERF-4:** Centralised HTTP timeout/keepalive defaults in
   `const.py` so they can be tuned without touching `client.py`.
 
+### Removed
+- **#46:** `size`, `quality`, and `style` are no longer accepted. Those were OpenAI image enums. Automations that passed them need a real image model id and, if that model supports it, aspect ratio, resolution, or width and height.
+
 ### Fixed
+- **#33:** Add the missing `config_entry_not_loaded` exception translation so a service call against an unloaded entry shows a translated error instead of the raw key.
+- **#35:** Add `entity.sensor` translations for the diagnostic usage sensors, keyed to the existing `translation_key` values.
+- **#43:** Remove hardcoded sensor `name=` so Home Assistant uses the entity translations.
+- **#41:** Import `RateLimitError` directly. The `None` fallback could never run because `client.py` always defines it.
+- **#38:** Treat `voluptuous-openapi` as the hard requirement it already is. Remove the unused availability guards.
+- **#40:** Refuse config entries newer than version 1, and persist the 1.0 to 1.1 bump with `async_update_entry`.
+- **#37:** Remove the unused in-memory conversation cache. Home Assistant already passes the chat log into the entity, and nothing wrote the local copy.
+- **#39:** Register services when a config entry loads, and remove them when the last entry unloads.
+- **#42:** Add a description on every options-form field, including stream response.
+- **#36:** Push diagnostic sensor updates when API metrics change instead of polling every 30 seconds.
+- **#45:** Remove the unused request-timeout option. Chat, streaming, TTS, STT, and image generation keep their own timeouts in `const.py`. A single slider cannot cover those waits.
 - **HA 2026.10 tool calls:** every tool call failed with
   `TypeError: ToolResultContent.__init__() got an unexpected keyword
   argument 'tool_result'`, surfacing as "Unexpected error during
@@ -71,5 +133,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.6...HEAD
+[1.1.0-dev.6]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...1.1.0-dev.6
+[1.1.0-dev.5]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...1.1.0-dev.5
+[1.1.0-dev.4]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...1.1.0-dev.4
+[1.1.0-dev.3]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.2...1.1.0-dev.3
+[1.1.0-dev.2]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.1...1.1.0-dev.2
+[1.1.0-dev.1]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev...1.1.0-dev.1
+[1.1.0-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.0.0...1.1.0-dev
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0

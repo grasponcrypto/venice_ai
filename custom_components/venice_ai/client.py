@@ -5,8 +5,9 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -93,15 +94,44 @@ class VeniceAIMetrics:
     completion_tokens: int = 0
     total_tokens: int = 0
     last_error: str | None = None
+    _listeners: list[Callable[[], None]] = field(
+        default_factory=list, repr=False, compare=False
+    )
+
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Register a callback invoked after a counter changes.
+
+        The returned callable removes that listener. A listener that raises is
+        logged and does not fail the API call that recorded the metric.
+        """
+        self._listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            try:
+                self._listeners.remove(listener)
+            except ValueError:
+                return
+
+        return _unsubscribe
+
+    def _notify_listeners(self) -> None:
+        """Tell subscribers that a counter changed."""
+        for listener in tuple(self._listeners):
+            try:
+                listener()
+            except Exception:
+                _LOGGER.exception("Venice AI metrics listener failed")
 
     def record_request(self) -> None:
         """Increment the total request counter."""
         self.request_count += 1
+        self._notify_listeners()
 
     def record_error(self, error: BaseException) -> None:
         """Increment the error counter and remember the last error message."""
         self.error_count += 1
         self.last_error = f"{type(error).__name__}: {error}"
+        self._notify_listeners()
 
     def record_usage(self, usage: dict[str, Any] | None) -> None:
         """Accumulate token usage from an API ``usage`` block, if present."""
@@ -110,6 +140,7 @@ class VeniceAIMetrics:
         self.prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
         self.completion_tokens += int(usage.get("completion_tokens", 0) or 0)
         self.total_tokens += int(usage.get("total_tokens", 0) or 0)
+        self._notify_listeners()
 
 
 
@@ -131,6 +162,44 @@ class ServiceUnavailableError(VeniceAIError):
 
 class NetworkError(VeniceAIError):
     """Network-level error — could not reach the Venice AI API (timeout, connection refused, etc.)."""
+
+
+def chat_completion_payload(data: dict[str, Any], *, stream: bool) -> dict[str, Any]:
+    """Build a chat-completion body Venice will accept.
+
+    Null fields are omitted. Venice rejects ``tools: null`` and the other
+    optional keys with HTTP 400 "Invalid request parameters". A whole-number
+    ``max_tokens`` is sent as an integer; a float fails the same check.
+    """
+    payload = {key: value for key, value in data.items() if value is not None}
+    max_tokens = payload.get("max_tokens")
+    if isinstance(max_tokens, float) and max_tokens.is_integer():
+        payload["max_tokens"] = int(max_tokens)
+    payload["stream"] = stream
+    return payload
+
+
+def api_error_message(error_detail: str) -> str:
+    """Return the API's message, including field details when present."""
+    if not error_detail:
+        return error_detail
+    try:
+        error_json = json.loads(error_detail)
+    except json.JSONDecodeError:
+        return error_detail
+    if not isinstance(error_json, dict):
+        return error_detail
+    error = error_json.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or error_detail)
+    elif isinstance(error, str) and error:
+        message = error
+    else:
+        message = error_detail
+    details = error_json.get("details")
+    if details:
+        return f"{message}: {details}"
+    return message
 
 
 def _categorize_http_error(
@@ -193,26 +262,22 @@ class ChatCompletions:
         stream_options: dict[str, Any] | None = None,
     ) -> AsyncGenerator[AsyncGenerator[ChatCompletionChunk, None], None]:
         """Create a streaming chat completion."""
-        data: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-        }
-        if max_tokens is not None:
-            data["max_tokens"] = max_tokens
-        if temperature is not None:
-            data["temperature"] = temperature
-        if top_p is not None:
-            data["top_p"] = top_p
-        if venice_parameters is not None:
-            data["venice_parameters"] = venice_parameters
-        if tools is not None:
-            data["tools"] = tools
-        if tool_choice is not None:
-            data["tool_choice"] = tool_choice
-        if stream_options is not None:
-            data["stream_options"] = stream_options
+        data = chat_completion_payload(
+            {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "venice_parameters": venice_parameters,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "stream_options": stream_options,
+            },
+            stream=True,
+        )
 
+        self.client.metrics.record_request()
         response: httpx.Response | None = None
         _connect_start = time.monotonic()
         _LOGGER.debug("[PERF-HTTP] POST /chat/completions (stream) — opening connection")
@@ -241,12 +306,18 @@ class ChatCompletions:
             except Exception:
                 pass
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "streaming chat") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "streaming chat"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             if response is not None:
                 await response.aclose()
             _LOGGER.error("Venice AI request error: %s", err)
-            raise NetworkError(f"Request error (streaming chat): {err}") from err
+            network_err = NetworkError(f"Request error (streaming chat): {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
         async def _stream() -> AsyncGenerator[ChatCompletionChunk, None]:
             _chunk_count = 0
@@ -259,7 +330,13 @@ class ChatCompletions:
                         try:
                             chunk_data = json.loads(line[6:])
                             _chunk_count += 1
-                            yield ChatCompletionChunk(chunk_data)
+                            chunk = ChatCompletionChunk(chunk_data)
+                            # Final chunk carries usage when include_usage is set.
+                            # Non-streaming already records this; streaming must too
+                            # or the diagnostic sensors stay at 0 (the default path).
+                            if chunk.usage:
+                                self.client.metrics.record_usage(chunk.usage)
+                            yield chunk
                         except json.JSONDecodeError:
                             _LOGGER.warning("Failed to decode stream chunk: %s", line)
                     else:
@@ -273,7 +350,9 @@ class ChatCompletions:
                 # Convert mid-stream transport failures (connection reset, server close,
                 # timeout) to a typed NetworkError so callers get consistent exceptions.
                 _LOGGER.error("Stream interrupted by transport error: %s", err)
-                raise NetworkError(f"Stream interrupted: {err}") from err
+                network_err = NetworkError(f"Stream interrupted: {err}")
+                self.client.metrics.record_error(network_err)
+                raise network_err from err
             finally:
                 if response is not None:
                     await response.aclose()
@@ -307,7 +386,7 @@ class ChatCompletions:
         # Merge keyword arguments; kwargs take precedence over dict keys.
         if kwargs:
             payload = {**payload, **kwargs}
-        payload = {**payload, "stream": False}
+        payload = chat_completion_payload(payload, stream=False)
 
         self.client.metrics.record_request()
         try:
@@ -328,17 +407,7 @@ class ChatCompletions:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
-            # Try to extract a human-readable message from the JSON error body.
-            error_message = error_detail
-            if error_detail:
-                try:
-                    error_json = json.loads(error_detail)
-                    if isinstance(error_json.get("error"), dict):
-                        error_message = error_json["error"].get("message", error_detail)
-                    elif isinstance(error_json.get("error"), str):
-                        error_message = error_json["error"]
-                except json.JSONDecodeError:
-                    pass
+            error_message = api_error_message(error_detail)
             categorized = _categorize_http_error(err.response.status_code, error_message, "chat completion")
             self.client.metrics.record_error(categorized)
             raise categorized from err
@@ -454,6 +523,7 @@ class Speech:
         }
 
         _gen_start = time.monotonic()
+        self.client.metrics.record_request()
         _LOGGER.debug(
             "[PERF-HTTP] POST /audio/speech (non-streaming) — model=%s, voice=%s, format=%s, text=%d chars",
             model, voice, audio_output, len(text),
@@ -487,10 +557,16 @@ class Speech:
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "generating speech") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "generating speech"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise NetworkError(f"Request error generating speech: {err}") from err
+            network_err = NetworkError(f"Request error generating speech: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
     async def generate_streaming(
         self,
@@ -513,6 +589,7 @@ class Speech:
         audio_headers = {
             "Authorization": f"Bearer {self.client._api_key}",
         }
+        self.client.metrics.record_request()
 
         try:
             response = await self.client._async_request_with_retry(
@@ -548,7 +625,9 @@ class Speech:
                 )
             except httpx.TransportError as err:
                 _LOGGER.error("Streaming TTS transport error: %s", err)
-                raise NetworkError(f"Streaming TTS interrupted: {err}") from err
+                network_err = NetworkError(f"Streaming TTS interrupted: {err}")
+                self.client.metrics.record_error(network_err)
+                raise network_err from err
 
         except httpx.HTTPStatusError as err:
             error_detail = "Unknown error"
@@ -561,10 +640,16 @@ class Speech:
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "streaming speech") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "streaming speech"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise NetworkError(f"Request error generating streaming speech: {err}") from err
+            network_err = NetworkError(f"Request error generating streaming speech: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
 
 
 class Transcriptions:
@@ -596,6 +681,7 @@ class Transcriptions:
         }
 
         _stt_start = time.monotonic()
+        self.client.metrics.record_request()
         _LOGGER.debug(
             "[PERF-HTTP] POST /audio/transcriptions — model=%s, format=%s, audio=%d bytes",
             model, response_format, len(audio_data),
@@ -623,17 +709,158 @@ class Transcriptions:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI Transcriptions API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "creating transcription") from err
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "creating transcription"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
-            raise NetworkError(f"Request error creating transcription: {err}") from err
+            network_err = NetworkError(f"Request error creating transcription: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode transcriptions JSON response: %s", response.text)
-            raise VeniceAIError("Failed to decode transcriptions API response") from err
+            decode_err = VeniceAIError("Failed to decode transcriptions API response")
+            self.client.metrics.record_error(decode_err)
+            raise decode_err from err
+
+
+IMAGE_GENERATE_FORMAT = "webp"
+IMAGE_MIN_EDGE = 1
+IMAGE_MAX_EDGE = 1280
+
+
+class ImageGenerateError(ValueError):
+    """Caller input rejected before POST /image/generate."""
+
+
+def _constraint_choices(value: Any) -> list[str]:
+    """Return non-empty strings from a model constraint list."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _positive_int(value: Any) -> int | None:
+    """Return a positive int, or None if the value is not a whole number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    number = int(value)
+    if number <= 0:
+        return None
+    return number
+
+
+def image_model_constraints(model: dict[str, Any]) -> dict[str, Any]:
+    """Return the constraints object for one catalog model, or {}."""
+    spec = model.get("model_spec") or model.get("modelSpec") or {}
+    if not isinstance(spec, dict):
+        return {}
+    constraints = spec.get("constraints") or {}
+    if not isinstance(constraints, dict):
+        return {}
+    return constraints
+
+
+def find_image_model(
+    models: list[Any],
+    model_id: str,
+) -> dict[str, Any] | None:
+    """Find a type=image catalog entry by id.
+
+    Entries with no type are accepted, because the list is already
+    fetched with ``?type=image``. Video and other types are skipped.
+    """
+    for model in models:
+        if not isinstance(model, dict) or model.get("id") != model_id:
+            continue
+        model_type = model.get("type")
+        if model_type not in (None, "", "image"):
+            continue
+        return model
+    return None
+
+
+def _check_edge(name: str, value: Any, divisor: int) -> None:
+    """Reject a pixel edge the native image API would answer 400 for."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ImageGenerateError(f"{name} must be a whole number.")
+    if value < IMAGE_MIN_EDGE or value > IMAGE_MAX_EDGE:
+        raise ImageGenerateError(
+            f"{name} must be between {IMAGE_MIN_EDGE} and {IMAGE_MAX_EDGE}."
+        )
+    if value % divisor != 0:
+        raise ImageGenerateError(f"{name} must be divisible by {divisor}.")
+
+
+def image_generate_options(
+    constraints: dict[str, Any] | None,
+    prompt: str,
+    *,
+    aspect_ratio: str | None = None,
+    resolution: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+) -> dict[str, Any]:
+    """Build the native image fields this model will accept.
+
+    Width and height are included only for models that size by pixels
+    (a width/height divisor, and no aspect-ratio or resolution list).
+    Aspect ratio and resolution are included only when that list exists
+    and the value is in it. Anything else raises ImageGenerateError so
+    Venice is not asked for a size it will reject with HTTP 400.
+    """
+    spec = constraints if isinstance(constraints, dict) else {}
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ImageGenerateError("Prompt is required.")
+    limit = _positive_int(spec.get("promptCharacterLimit"))
+    if limit is not None and len(prompt) > limit:
+        raise ImageGenerateError(
+            f"Prompt is {len(prompt)} characters; this model allows {limit}."
+        )
+
+    aspects = _constraint_choices(spec.get("aspectRatios"))
+    resolutions = _constraint_choices(spec.get("resolutions"))
+    divisor = _positive_int(spec.get("widthHeightDivisor"))
+    uses_pixels = divisor is not None and not aspects and not resolutions
+
+    options: dict[str, Any] = {
+        "prompt": prompt,
+        "format": IMAGE_GENERATE_FORMAT,
+    }
+    if aspect_ratio is not None:
+        if not aspects:
+            raise ImageGenerateError("This model does not accept aspect_ratio.")
+        if aspect_ratio not in aspects:
+            joined = ", ".join(aspects)
+            raise ImageGenerateError(f"aspect_ratio must be one of: {joined}.")
+        options["aspect_ratio"] = aspect_ratio
+    if resolution is not None:
+        if not resolutions:
+            raise ImageGenerateError("This model does not accept resolution.")
+        if resolution not in resolutions:
+            joined = ", ".join(resolutions)
+            raise ImageGenerateError(f"resolution must be one of: {joined}.")
+        options["resolution"] = resolution
+    if width is None and height is None:
+        return options
+    if not uses_pixels:
+        raise ImageGenerateError("This model does not accept width or height.")
+    if width is None or height is None:
+        raise ImageGenerateError("width and height must be set together.")
+    assert divisor is not None
+    _check_edge("width", width, divisor)
+    _check_edge("height", height, divisor)
+    options["width"] = width
+    options["height"] = height
+    return options
 
 
 class Images:
-    """Images API for Venice AI."""
+    """Native image generation for Venice AI."""
 
     def __init__(self, client: "AsyncVeniceAIClient") -> None:
         """Initialize images API."""
@@ -643,27 +870,38 @@ class Images:
         self,
         model: str,
         prompt: str,
-        size: str = "1024x1024",
-        quality: str = "standard",
-        style: str = "vivid",
-        response_format: str = "url",
-        n: int = 1,
+        *,
+        constraints: dict[str, Any] | None = None,
+        aspect_ratio: str | None = None,
+        resolution: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> dict[str, Any]:
-        """Generate an image with Venice AI."""
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "size": size,
-            "quality": quality,
-            "style": style,
-            "response_format": response_format,
-            "n": n,
-        }
+        """Generate an image with POST /image/generate.
+
+        ``constraints`` is that model's ``model_spec.constraints``. Sizing
+        fields the model does not list are rejected here and are not sent.
+        ``"default"`` is not a model id on this endpoint.
+        """
+        if not isinstance(model, str) or not model.strip() or model == "default":
+            raise ImageGenerateError(
+                'model must be a Venice image model id, not "default".'
+            )
+        options = image_generate_options(
+            constraints,
+            prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            width=width,
+            height=height,
+        )
+        payload = {"model": model, **options}
+        self.client.metrics.record_request()
 
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
-                "/images/generations",
+                "/image/generate",
                 headers=self.client._headers,
                 json=payload,
                 timeout=DEFAULT_IMAGE_TIMEOUT,
@@ -673,14 +911,27 @@ class Images:
 
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error("Venice AI Images API HTTP error %s: %s", err.response.status_code, error_detail)
-            raise _categorize_http_error(err.response.status_code, error_detail, "generating image") from err
+            _LOGGER.error(
+                "Venice AI Images API HTTP error %s: %s",
+                err.response.status_code,
+                error_detail,
+            )
+            categorized = _categorize_http_error(
+                err.response.status_code, error_detail, "generating image"
+            )
+            self.client.metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Images API request error: %s", err)
-            raise NetworkError(f"Request error generating image: {err}") from err
+            network_err = NetworkError(f"Request error generating image: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode images JSON response: %s", response.text)
-            raise VeniceAIError("Failed to decode images API response") from err
+            decode_err = VeniceAIError("Failed to decode images API response")
+            self.client.metrics.record_error(decode_err)
+            raise decode_err from err
+
 
 
 class AsyncVeniceAIClient:
@@ -758,11 +1009,26 @@ class AsyncVeniceAIClient:
 
                 if response.status_code in retryable_statuses:
                     if attempt < MAX_RETRIES:
-                        # Fully consume response body to free connection before retry
+                        # Read and close before the next attempt. aread() alone
+                        # does not release the connection if the body read fails.
                         try:
                             await response.aread()
                         except Exception:
-                            pass
+                            _LOGGER.debug(
+                                "Could not read retry response body for %s %s",
+                                method,
+                                endpoint,
+                                exc_info=True,
+                            )
+                        try:
+                            await response.aclose()
+                        except Exception:
+                            _LOGGER.debug(
+                                "Could not close retry response for %s %s",
+                                method,
+                                endpoint,
+                                exc_info=True,
+                            )
                         delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
                         _LOGGER.warning(
                             "[PERF-HTTP] %s %s → HTTP %d in %.3fs; retrying in %.1fs (attempt %d/%d)",

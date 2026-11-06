@@ -13,17 +13,25 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .ai_task_support import chat_messages_from_log, option_float, option_int
 from .client import VeniceAIError
-from .venice_api import ChatParameters, VeniceConversationService
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_DISABLE_THINKING,
     CONF_MAX_TOKENS,
+    CONF_STREAM_RESPONSE,
     CONF_TEMPERATURE,
+    CONF_TOP_P,
+    DEVICE_MODEL,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_DISABLE_THINKING,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_TOP_P,
 )
+from .venice_api import ChatParameters, VeniceConversationService
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,7 +96,7 @@ else:
                 identifiers={(DOMAIN, entry.entry_id)},
                 name=entry.title,
                 manufacturer="Venice AI",
-                model="AI Task",
+                model=DEVICE_MODEL,
                 entry_type=dr.DeviceEntryType.SERVICE,
             )
             # Fix 6: delegate API calls through the service layer so retry
@@ -139,41 +147,48 @@ else:
             chat_log: conversation.ChatLog,
         ) -> ai_task.GenDataTaskResult:
             """Internal implementation of generate data task."""
-            # Build a local messages list without mutating chat_log.content
-            messages = []
-            for msg in chat_log.content:
-                if isinstance(msg, conversation.SystemContent):
-                    messages.append({"role": "system", "content": msg.content})
-                elif isinstance(msg, conversation.UserContent):
-                    messages.append({"role": "user", "content": msg.content})
-                elif isinstance(msg, conversation.AssistantContent):
-                    venice_msg = {
-                        "role": "assistant",
-                        "content": msg.content or "",
-                    }
-                    messages.append(venice_msg)
-
-            # Append task instructions as a user message in the local list
-            messages.append({"role": "user", "content": task.instructions})
+            messages = chat_messages_from_log(chat_log.content, task.instructions)
 
             if not messages or messages[-1].get("role") != "user":
                 raise HomeAssistantError("No user message found in chat log")
 
-            # Use the configured chat model from options
-            model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-
-            # Use configured options from config entry instead of hardcoded values
-            max_tokens = self.entry.options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
-            temperature = self.entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
+            options = self.entry.options
+            model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+            if not isinstance(model, str) or not model.strip():
+                model = RECOMMENDED_CHAT_MODEL
+            max_tokens = option_int(options, CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
+            temperature = option_float(
+                options, CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
+            )
+            top_p = option_float(options, CONF_TOP_P, RECOMMENDED_TOP_P)
+            venice_parameters = None
+            if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING):
+                venice_parameters = {"disable_thinking": True}
+            stream = bool(
+                options.get(CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE)
+            )
 
             try:
-                # Fix 6: use the service layer instead of calling the client directly.
                 chat_params = ChatParameters(
                     model=model,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    top_p=top_p,
+                    venice_parameters=venice_parameters,
                 )
-                response_data = await self._service.chat(messages, chat_params)
+                _LOGGER.debug(
+                    "AI task request model=%s stream=%s roles=%s",
+                    model,
+                    stream,
+                    [message.get("role") for message in messages],
+                )
+                if stream:
+                    stream_result = await self._service.chat_stream(
+                        messages, chat_params
+                    )
+                    response_data = stream_result.as_response()
+                else:
+                    response_data = await self._service.chat(messages, chat_params)
 
                 if not response_data or not response_data.get("choices"):
                     raise HomeAssistantError("Invalid Venice AI response")

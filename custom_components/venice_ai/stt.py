@@ -16,18 +16,21 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
+from .client import AsyncVeniceAIClient, VeniceAIError
 from .const import (
     CONF_STT_MODEL,
     CONF_STT_RESPONSE_FORMAT,
     CONF_STT_TIMESTAMPS,
+    DEVICE_MODEL,
     DOMAIN,
     MAX_STT_BUFFER_SIZE,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
+    configured_str,
 )
-from .client import AsyncVeniceAIClient, VeniceAIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +43,23 @@ _STT_VALIDATION_ATTRS = [
     ("sample_rate", "supported_sample_rates", "sample rate"),
     ("channel", "supported_channels", "channel count"),
 ]
+
+# Home Assistant 2026.10 stores the last processed time on the base class
+# under this name-mangled attribute. Assist calls async_process_audio_stream
+# directly, so the core wrapper that normally sets it never runs.
+_STT_LAST_PROCESSED = "_SpeechToTextEntity__last_processed"
+_NON_TIMESTAMP_STATES = {"unknown", "unavailable", "none"}
+
+
+def is_iso_timestamp(value: object) -> bool:
+    """Return True when value is a timestamp Home Assistant can display."""
+    if not isinstance(value, str) or not value or value in _NON_TIMESTAMP_STATES:
+        return False
+    try:
+        datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
@@ -83,6 +103,8 @@ async def async_setup_entry(
 class VeniceAISTT(SpeechToTextEntity):
     """The Venice AI Speech-to-Text provider."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         entry: ConfigEntry,
@@ -90,14 +112,73 @@ class VeniceAISTT(SpeechToTextEntity):
         """Initialize Venice AI STT."""
         self.entry = entry
         self._attr_unique_id = f"{entry.entry_id}_stt"
-        self._attr_name = entry.title
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="Venice AI",
-            model="STT",
+            model=DEVICE_MODEL,
             entry_type=dr.DeviceEntryType.SERVICE,
         )
+
+    @property
+    def name(self) -> str:
+        """Return a name that includes the model.
+
+        Home Assistant owns the state and shows it as a timestamp, or Unknown
+        until the next transcription. The model used to live in that state.
+        """
+        return f"STT ({self._model()})"
+
+    def _model(self) -> str:
+        """Return the configured speech-to-text model."""
+        return configured_str(self.entry.options, CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Return the configured model.
+
+        Do not override ``state``. Home Assistant 2026.10 owns speech-to-text
+        state and sets it to the last processed time. The frontend formats
+        that state as a timestamp, so a model id is shown as Invalid timestamp
+        even when transcription succeeded.
+        """
+        return {"model": self._model()}
+
+    async def async_internal_added_to_hass(self) -> None:
+        """Drop a restored model id so the UI does not say Invalid timestamp.
+
+        2026.10 copies the previous state into the timestamp field without
+        checking it. Older releases stored the model id there.
+        """
+        await super().async_internal_added_to_hass()
+        self._drop_non_timestamp_state()
+
+    def _drop_non_timestamp_state(self) -> None:
+        """Clear a restored state that is not a timestamp."""
+        last = getattr(self, _STT_LAST_PROCESSED, None)
+        if last is None or is_iso_timestamp(last):
+            return
+        setattr(self, _STT_LAST_PROCESSED, None)
+        self._write_stt_state()
+
+    def _record_processed_time(self) -> None:
+        """Store the time Assist actually called this entity.
+
+        The core HTTP view sets this before calling us. Assist does not.
+        """
+        try:
+            stamp = dt_util.utcnow().isoformat()
+            setattr(self, _STT_LAST_PROCESSED, stamp)
+            self._attr_state = stamp
+            self._write_stt_state()
+        except Exception:
+            _LOGGER.debug("Could not record STT processed time", exc_info=True)
+
+    def _write_stt_state(self) -> None:
+        """Write state when the entity is already registered."""
+        if self.hass is None or not getattr(self, "entity_id", None):
+            return
+        self.async_write_ha_state()
 
     @property
     def supported_languages(self) -> list[str]:
@@ -142,6 +223,10 @@ class VeniceAISTT(SpeechToTextEntity):
         Venice AI does not currently support chunked streaming uploads
         for transcriptions.
         """
+        # Assist bypasses internal_async_process_audio_stream, which is the
+        # only core path that records the timestamp the device page displays.
+        self._record_processed_time()
+
         # Validate metadata against declared supported formats
         for attr, prop, label in _STT_VALIDATION_ATTRS:
             supported = getattr(self, prop)

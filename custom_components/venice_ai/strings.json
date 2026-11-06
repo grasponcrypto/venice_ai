@@ -46,13 +46,70 @@
             "tts_speed": "TTS Speed",
             "stt_model": "STT Model",
             "stt_response_format": "STT Response Format",
-            "stt_timestamps": "STT Include Timestamps"
+            "stt_timestamps": "STT Include Timestamps",
+            "stream_response": "Stream response"
+          },
+          "data_description": {
+            "chat_model": "Chat model used for conversation. Every text model returned by Venice AI is listed. Device control needs a model that can call tools.",
+            "prompt": "Instructions sent with every conversation. Home Assistant adds entity state and tool instructions.",
+            "llm_hass_api": "Home Assistant APIs this assistant may use to control devices. Leave empty to disable control.",
+            "temperature": "Higher values make replies more varied. Range 0 to 2.",
+            "top_p": "Nucleus sampling cutoff. Range 0 to 1.",
+            "max_tokens": "Maximum tokens in a single reply. Range 1 to 32768.",
+            "strip_thinking_response": "Remove reasoning text from the spoken or displayed reply.",
+            "disable_thinking": "Ask reasoning models not to use a thinking step.",
+            "max_tool_iterations": "How many tool calls one turn may make. Range 1 to 20.",
+            "tts_model_voice": "Speech model and voice, shown as model then voice.",
+            "tts_response_format": "Audio format returned by text-to-speech.",
+            "tts_speed": "Playback speed. Range 0.25 to 4.",
+            "stt_model": "Model used to transcribe speech.",
+            "stt_response_format": "Format of the transcription result.",
+            "stt_timestamps": "Include word timestamps when the model supports them.",
+            "stream_response": "Stream the reply as it is generated instead of waiting for the full response."
           }
         }
       },
       "error": {
+        "invalid_auth": "Invalid API key",
+        "cannot_connect": "Failed to connect to Venice AI",
+        "unknown": "Unexpected error",
+        "missing_api_key": "No API key is stored for this entry. Reconfigure Venice AI and enter the key again.",
         "invalid_tts_voice_for_model": "The selected voice entry is invalid. Please select a valid 'Model → Voice' entry from the list.",
-        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
+        "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable.",
+        "max_tokens_out_of_range": "Max tokens must be between 1 and 32768.",
+        "top_p_out_of_range": "Top P must be between 0 and 1.",
+        "temperature_out_of_range": "Temperature must be between 0 and 2.",
+        "max_tool_iterations_out_of_range": "Max tool iterations must be between 1 and 20.",
+        "tts_speed_out_of_range": "TTS speed must be between 0.25 and 4.",
+        "prompt_must_be_string": "The system prompt must be text."
+      }
+    },
+    "entity": {
+      "sensor": {
+        "request_count": {
+          "name": "API requests"
+        },
+        "error_count": {
+          "name": "API errors"
+        },
+        "total_tokens": {
+          "name": "Total tokens"
+        },
+        "prompt_tokens": {
+          "name": "Prompt tokens"
+        },
+        "completion_tokens": {
+          "name": "Completion tokens"
+        },
+        "last_error": {
+          "name": "Last error"
+        },
+        "stt_model": {
+          "name": "STT model"
+        },
+        "tts_model": {
+          "name": "TTS model"
+        }
       }
     },
     "issues": {
@@ -81,14 +138,26 @@
       "invalid_config_entry": {
         "message": "Config entry {config_entry} is not a Venice AI entry."
       },
+      "config_entry_not_loaded": {
+        "message": "Config entry {config_entry} is not loaded."
+      },
       "entity_not_found": {
         "message": "Venice AI Task entity not found for config entry {entry_id}."
+      },
+      "image_models_unavailable": {
+        "message": "Image models are not available yet. Reload the Venice AI integration and try again."
+      },
+      "unknown_image_model": {
+        "message": "{model} is not an available Venice image model. Use an id from the image catalog, not a video model or \"default\"."
+      },
+      "invalid_image_request": {
+        "message": "{reason}"
       }
     },
     "services": {
       "generate_image": {
         "name": "Generate Image",
-        "description": "Generate an image using Venice AI.",
+        "description": "Generate an image with a Venice image model. Returns base64 webp, not a URL.",
         "fields": {
           "config_entry": {
             "name": "Config Entry",
@@ -98,17 +167,25 @@
             "name": "Prompt",
             "description": "Image description"
           },
-          "size": {
-            "name": "Size",
-            "description": "Image size"
+          "model": {
+            "name": "Model",
+            "description": "Image model id from the Venice image catalog. Not a video model, and not \"default\"."
           },
-          "quality": {
-            "name": "Quality",
-            "description": "Image quality"
+          "aspect_ratio": {
+            "name": "Aspect ratio",
+            "description": "Aspect ratio this model lists, such as 1:1 or 16:9. Models that do not list aspect ratios reject this field."
           },
-          "style": {
-            "name": "Style",
-            "description": "Image style"
+          "resolution": {
+            "name": "Resolution",
+            "description": "Resolution this model lists, such as 1K or 2K. Models that do not list resolutions reject this field."
+          },
+          "width": {
+            "name": "Width",
+            "description": "Pixel width from 1 to 1280. Set with height, and only for models that size by pixels."
+          },
+          "height": {
+            "name": "Height",
+            "description": "Pixel height from 1 to 1280. Set with width, and only for models that size by pixels."
           }
         }
       },

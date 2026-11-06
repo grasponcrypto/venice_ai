@@ -3,16 +3,12 @@
 from datetime import timedelta
 
 DOMAIN = "venice_ai"
+# One model for every platform. They share a device id, so different model
+# strings make the device page flip between Conversation, TTS, STT, and AI Task.
+DEVICE_MODEL = "Venice AI"
 
 # Coordinator refresh interval — must be a timedelta for DataUpdateCoordinator
 UPDATE_INTERVAL = timedelta(hours=12)
-
-# Centralized voluptuous_openapi detection
-try:
-    from voluptuous_openapi import convert as voluptuous_convert  # noqa: F401
-    HAS_VOLUPTUOUS_OPENAPI = True
-except ImportError:
-    HAS_VOLUPTUOUS_OPENAPI = False
 
 CONF_PROMPT = "prompt"
 CONF_CHAT_MODEL = "chat_model"
@@ -56,13 +52,20 @@ RECOMMENDED_STT_RESPONSE_FORMAT = "json"
 CONF_STT_TIMESTAMPS = "stt_timestamps"
 RECOMMENDED_STT_TIMESTAMPS = False
 
+
+def configured_str(options: object, key: str, default: str) -> str:
+    """Return a non-empty string option, otherwise the default."""
+    if not isinstance(options, dict):
+        return default
+    value = options.get(key, default)
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
+
 # Conversation tool iteration limit
 CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
 RECOMMENDED_MAX_TOOL_ITERATIONS = 5
 MAX_CHAT_LOG_LENGTH = 50
-
-# Maximum number of concurrent conversations held in-memory (LRU eviction)
-MAX_CHAT_HISTORY_SIZE = 20
 
 # Maximum audio buffer size for STT to prevent memory spikes (10 MB).
 # Venice AI does not support chunked/streaming STT uploads; the entire audio
@@ -70,19 +73,15 @@ MAX_CHAT_HISTORY_SIZE = 20
 # are rejected early with an ERROR result rather than causing an OOM spike.
 MAX_STT_BUFFER_SIZE = 10 * 1024 * 1024
 
-# Request timeout configuration (HIGH-4)
-# Users with slow connections or large payloads can raise this via options.
-CONF_REQUEST_TIMEOUT = "request_timeout"
-RECOMMENDED_REQUEST_TIMEOUT = 60.0
+# Request timeouts are per operation, not one user setting. A stream can
+# sit open for minutes while tokens arrive; a model-list call should fail
+# in seconds. See DEFAULT_HTTP_TIMEOUT and the per-call constants below.
 
 # Retry configuration constants (MED-4).
 # Extracted from client.py so they can be tuned without touching client logic.
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
 RETRY_MAX_DELAY = 30.0
-
-# Inactive conversation TTL in seconds (HIGH-2 periodic cleanup).
-CONVERSATION_TTL_SECONDS = 3600  # 1 hour
 
 # Feature minimum HA versions (MAINT-3).
 # Reference table for conditional feature activation and user-facing docs.
@@ -94,7 +93,11 @@ FEATURE_MIN_VERSIONS: dict[str, str] = {
 }
 
 # QUAL-2 / PERF-4: httpx connection-pool and per-request timeout defaults.
-# Centralised here so users tuning behaviour can adjust a single value.
+# These are intentionally hardcoded. Chat, streaming chat, TTS, STT, and
+# image generation wait for different lengths of time; one options slider
+# cannot cover all of them without cutting off a stream or hanging a
+# short call. client.py passes the matching constant as the per-request
+# timeout. DEFAULT_HTTP_TIMEOUT is only the client-wide fallback.
 DEFAULT_HTTP_TIMEOUT = 30.0
 DEFAULT_HTTP_KEEPALIVE = 5
 DEFAULT_HTTP_MAX_CONNECTIONS = 10

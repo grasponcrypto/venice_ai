@@ -71,8 +71,6 @@ from .const import (
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
-    CONF_REQUEST_TIMEOUT,
-    RECOMMENDED_REQUEST_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,6 +120,7 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Venice AI Conversation."""
 
     VERSION = 1
+    MINOR_VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -603,9 +602,6 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         tts_speed = user_input.get(CONF_TTS_SPEED)
         if isinstance(tts_speed, (int, float)) and not (0.25 <= tts_speed <= 4.0):
             errors[CONF_TTS_SPEED] = "tts_speed_out_of_range"
-        timeout = user_input.get(CONF_REQUEST_TIMEOUT)
-        if isinstance(timeout, (int, float)) and not (10.0 <= timeout <= 300.0):
-            errors[CONF_REQUEST_TIMEOUT] = "request_timeout_out_of_range"
         prompt = user_input.get(CONF_PROMPT)
         if prompt is not None and not isinstance(prompt, str):
             errors[CONF_PROMPT] = "prompt_must_be_string"
@@ -705,9 +701,6 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     )
                 ),
                 vol.Optional(CONF_STT_TIMESTAMPS): BooleanSelector(),
-                vol.Optional(CONF_REQUEST_TIMEOUT): NumberSelector(
-                    NumberSelectorConfig(min=10.0, max=300.0, step=5.0, mode="slider")
-                ),
             }
         )
 
@@ -813,7 +806,6 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             CONF_STT_MODEL: RECOMMENDED_STT_MODEL,
             CONF_STT_RESPONSE_FORMAT: RECOMMENDED_STT_RESPONSE_FORMAT,
             CONF_STT_TIMESTAMPS: RECOMMENDED_STT_TIMESTAMPS,
-            CONF_REQUEST_TIMEOUT: RECOMMENDED_REQUEST_TIMEOUT,
         }
         # Saved options may contain CONF_TTS_MODEL / CONF_TTS_VOICE separately —
         # those keys are not in the schema and are harmlessly ignored by
