@@ -52,6 +52,16 @@ RECOMMENDED_STT_RESPONSE_FORMAT = "json"
 CONF_STT_TIMESTAMPS = "stt_timestamps"
 RECOMMENDED_STT_TIMESTAMPS = False
 
+
+def configured_str(options: object, key: str, default: str) -> str:
+    """Return a non-empty string option, otherwise the default."""
+    if not isinstance(options, dict):
+        return default
+    value = options.get(key, default)
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
+
 # Conversation tool iteration limit
 CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
 RECOMMENDED_MAX_TOOL_ITERATIONS = 5

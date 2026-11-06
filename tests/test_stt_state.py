@@ -140,6 +140,7 @@ def test_model_id_is_not_a_timestamp_and_assist_records_one() -> None:
     entity._drop_non_timestamp_state()
     assert written == []
     assert entity.extra_state_attributes == {"model": "nvidia/parakeet-tdt-0.6b-v3"}
+    assert entity.name == "STT (nvidia/parakeet-tdt-0.6b-v3)"
 
 
 def test_tts_attribute_is_the_configured_model() -> None:
@@ -152,5 +153,9 @@ def test_tts_attribute_is_the_configured_model() -> None:
         runtime_data=types.SimpleNamespace(client=object(), coordinator=None),
     )
     entity = tts.VeniceAITTS(entry)
-    assert entity.extra_state_attributes == {"model": "kokoro"}
+    assert entity.extra_state_attributes == {
+        "model": "kokoro",
+        "voice": "bm_daniel",
+    }
+    assert entity.name == "TTS (kokoro)"
 

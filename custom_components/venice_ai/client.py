@@ -164,6 +164,44 @@ class NetworkError(VeniceAIError):
     """Network-level error — could not reach the Venice AI API (timeout, connection refused, etc.)."""
 
 
+def chat_completion_payload(data: dict[str, Any], *, stream: bool) -> dict[str, Any]:
+    """Build a chat-completion body Venice will accept.
+
+    Null fields are omitted. Venice rejects ``tools: null`` and the other
+    optional keys with HTTP 400 "Invalid request parameters". A whole-number
+    ``max_tokens`` is sent as an integer; a float fails the same check.
+    """
+    payload = {key: value for key, value in data.items() if value is not None}
+    max_tokens = payload.get("max_tokens")
+    if isinstance(max_tokens, float) and max_tokens.is_integer():
+        payload["max_tokens"] = int(max_tokens)
+    payload["stream"] = stream
+    return payload
+
+
+def api_error_message(error_detail: str) -> str:
+    """Return the API's message, including field details when present."""
+    if not error_detail:
+        return error_detail
+    try:
+        error_json = json.loads(error_detail)
+    except json.JSONDecodeError:
+        return error_detail
+    if not isinstance(error_json, dict):
+        return error_detail
+    error = error_json.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or error_detail)
+    elif isinstance(error, str) and error:
+        message = error
+    else:
+        message = error_detail
+    details = error_json.get("details")
+    if details:
+        return f"{message}: {details}"
+    return message
+
+
 def _categorize_http_error(
     status_code: int, error_detail: str, context: str = ""
 ) -> VeniceAIError:
@@ -224,25 +262,20 @@ class ChatCompletions:
         stream_options: dict[str, Any] | None = None,
     ) -> AsyncGenerator[AsyncGenerator[ChatCompletionChunk, None], None]:
         """Create a streaming chat completion."""
-        data: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-        }
-        if max_tokens is not None:
-            data["max_tokens"] = max_tokens
-        if temperature is not None:
-            data["temperature"] = temperature
-        if top_p is not None:
-            data["top_p"] = top_p
-        if venice_parameters is not None:
-            data["venice_parameters"] = venice_parameters
-        if tools is not None:
-            data["tools"] = tools
-        if tool_choice is not None:
-            data["tool_choice"] = tool_choice
-        if stream_options is not None:
-            data["stream_options"] = stream_options
+        data = chat_completion_payload(
+            {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "venice_parameters": venice_parameters,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "stream_options": stream_options,
+            },
+            stream=True,
+        )
 
         self.client.metrics.record_request()
         response: httpx.Response | None = None
@@ -353,7 +386,7 @@ class ChatCompletions:
         # Merge keyword arguments; kwargs take precedence over dict keys.
         if kwargs:
             payload = {**payload, **kwargs}
-        payload = {**payload, "stream": False}
+        payload = chat_completion_payload(payload, stream=False)
 
         self.client.metrics.record_request()
         try:
@@ -374,17 +407,7 @@ class ChatCompletions:
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
             _LOGGER.error("Venice AI HTTP error %s: %s", err.response.status_code, error_detail)
-            # Try to extract a human-readable message from the JSON error body.
-            error_message = error_detail
-            if error_detail:
-                try:
-                    error_json = json.loads(error_detail)
-                    if isinstance(error_json.get("error"), dict):
-                        error_message = error_json["error"].get("message", error_detail)
-                    elif isinstance(error_json.get("error"), str):
-                        error_message = error_json["error"]
-                except json.JSONDecodeError:
-                    pass
+            error_message = api_error_message(error_detail)
             categorized = _categorize_http_error(err.response.status_code, error_message, "chat completion")
             self.client.metrics.record_error(categorized)
             raise categorized from err

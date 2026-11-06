@@ -13,6 +13,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Config and re-auth flows pass Home Assistant's shared HTTP client, so certificate loading does not block the event loop.
 - Options copy and the README match the unfiltered text-model list and the actions this branch actually registers.
 
+## [1.1.0-dev.6] - 2026-11-06
+
+### Fixed
+- **Speech models:** Home Assistant owns STT and TTS state and shows a timestamp, or Unknown until the next use. Putting the model id back in that state makes the device page say Invalid timestamp. The model is now in the entity name, the attributes, and a diagnostic sensor (`STT model`, `TTS model`). TTS also shows its voice as an attribute.
+- **AI Task action:** `venice_ai.ai_task` posted a non-streaming chat body that included null fields (`tools`, `top_p`, `venice_parameters`). Venice rejects that with HTTP 400 Invalid request parameters. Chat already omitted those fields and streams by default, which is why chat still worked. The task now uses that same request shape, including disable-thinking and the configured stream option. A 400 now includes the API's field details.
+
 ## [1.1.0-dev.5] - 2026-11-03
 
 ### Fixed
@@ -127,7 +133,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...HEAD
+[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.6...HEAD
+[1.1.0-dev.6]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...1.1.0-dev.6
 [1.1.0-dev.5]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.4...1.1.0-dev.5
 [1.1.0-dev.4]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.3...1.1.0-dev.4
 [1.1.0-dev.3]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.2...1.1.0-dev.3

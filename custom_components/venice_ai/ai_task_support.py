@@ -49,6 +49,55 @@ def build_gen_data_task(
     return task_cls(**kwargs)
 
 
+def chat_messages_from_log(content: object, instructions: str) -> list[dict[str, str]]:
+    """Convert a chat log into Venice messages.
+
+    An empty system prompt is dropped. Venice rejects it as invalid parameters.
+    The task text is added only when the log does not already end with it.
+    """
+    messages: list[dict[str, str]] = []
+    items = content if isinstance(content, list) else []
+    for msg in items:
+        role = getattr(msg, "role", None)
+        raw = getattr(msg, "content", None)
+        if isinstance(raw, str):
+            text = raw
+        elif raw is None:
+            text = ""
+        else:
+            text = str(raw)
+        if role == "system":
+            if text.strip():
+                messages.append({"role": "system", "content": text})
+        elif role == "user":
+            if text.strip():
+                messages.append({"role": "user", "content": text})
+        elif role == "assistant":
+            messages.append({"role": "assistant", "content": text})
+    append_task_instruction(messages, instructions)
+    return messages
+
+
+def option_int(options: object, key: str, default: int) -> int:
+    """Return an integer option. Floats are truncated; junk uses the default."""
+    if not isinstance(options, dict):
+        return default
+    value = options.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return int(value)
+
+
+def option_float(options: object, key: str, default: float) -> float:
+    """Return a float option. Junk uses the default."""
+    if not isinstance(options, dict):
+        return default
+    value = options.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return float(value)
+
+
 def append_task_instruction(messages: list[dict[str, Any]], instructions: str) -> None:
     """Add the task text unless the chat log already ends with it.
 

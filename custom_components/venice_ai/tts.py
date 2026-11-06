@@ -33,8 +33,8 @@ from .const import (
     RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
+    configured_str,
 )
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +52,6 @@ class VeniceAITTS(TextToSpeechEntity):
     """Venice AI TTS entity."""
 
     _attr_has_entity_name = True
-    _attr_name = "TTS"
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize TTS entity."""
@@ -68,15 +67,28 @@ class VeniceAITTS(TextToSpeechEntity):
         )
 
     @property
-    def extra_state_attributes(self) -> dict[str, str]:
-        """Return the configured model.
+    def name(self) -> str:
+        """Return a name that includes the model.
 
         Home Assistant owns text-to-speech state and stores the last spoken
-        time there. The model is an attribute, the same place speech-to-text
-        shows it.
+        time there. The model is not a legal state value.
         """
-        model = self._config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        return {"model": str(model or RECOMMENDED_TTS_MODEL)}
+        return f"TTS ({self._model()})"
+
+    def _model(self) -> str:
+        """Return the configured text-to-speech model."""
+        return configured_str(
+            self._config_entry.options, CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Return the configured model and voice."""
+        options = self._config_entry.options
+        return {
+            "model": self._model(),
+            "voice": configured_str(options, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE),
+        }
 
     @property
     def supported_languages(self) -> list[str]:

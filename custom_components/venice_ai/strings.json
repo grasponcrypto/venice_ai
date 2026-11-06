@@ -103,6 +103,12 @@
         },
         "last_error": {
           "name": "Last error"
+        },
+        "stt_model": {
+          "name": "STT model"
+        },
+        "tts_model": {
+          "name": "TTS model"
         }
       }
     },

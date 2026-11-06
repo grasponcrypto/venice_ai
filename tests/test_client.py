@@ -491,3 +491,36 @@ class TestRetryReleasesResponse:
         assert failed.closed is True
         assert ok.closed is False
 
+
+
+def test_chat_payload_drops_nulls_and_whole_number_floats() -> None:
+    payload = client.chat_completion_payload(
+        {
+            "model": "venice-llm",
+            "messages": [{"role": "user", "content": "ok"}],
+            "max_tokens": 512.0,
+            "temperature": 1.0,
+            "top_p": None,
+            "tools": None,
+            "venice_parameters": None,
+        },
+        stream=False,
+    )
+    assert payload == {
+        "model": "venice-llm",
+        "messages": [{"role": "user", "content": "ok"}],
+        "max_tokens": 512,
+        "temperature": 1.0,
+        "stream": False,
+    }
+
+
+def test_api_error_message_includes_field_details() -> None:
+    body = (
+        '{"error": "Invalid request parameters", "details": '
+        '{"tools": {"_errors": ["Expected array, received null"]}}}'
+    )
+    message = client.api_error_message(body)
+    assert message.startswith("Invalid request parameters:")
+    assert "tools" in message
+

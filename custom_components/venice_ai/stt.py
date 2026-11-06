@@ -18,6 +18,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from .client import AsyncVeniceAIClient, VeniceAIError
 from .const import (
     CONF_STT_MODEL,
     CONF_STT_RESPONSE_FORMAT,
@@ -28,8 +29,8 @@ from .const import (
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
+    configured_str,
 )
-from .client import AsyncVeniceAIClient, VeniceAIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,7 +104,6 @@ class VeniceAISTT(SpeechToTextEntity):
     """The Venice AI Speech-to-Text provider."""
 
     _attr_has_entity_name = True
-    _attr_name = "STT"
 
     def __init__(
         self,
@@ -121,6 +121,19 @@ class VeniceAISTT(SpeechToTextEntity):
         )
 
     @property
+    def name(self) -> str:
+        """Return a name that includes the model.
+
+        Home Assistant owns the state and shows it as a timestamp, or Unknown
+        until the next transcription. The model used to live in that state.
+        """
+        return f"STT ({self._model()})"
+
+    def _model(self) -> str:
+        """Return the configured speech-to-text model."""
+        return configured_str(self.entry.options, CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+
+    @property
     def extra_state_attributes(self) -> dict[str, str]:
         """Return the configured model.
 
@@ -129,8 +142,7 @@ class VeniceAISTT(SpeechToTextEntity):
         that state as a timestamp, so a model id is shown as Invalid timestamp
         even when transcription succeeded.
         """
-        model = self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
-        return {"model": str(model or RECOMMENDED_STT_MODEL)}
+        return {"model": self._model()}
 
     async def async_internal_added_to_hass(self) -> None:
         """Drop a restored model id so the UI does not say Invalid timestamp.

@@ -64,3 +64,31 @@ def test_append_adds_instruction_when_missing() -> None:
     messages = [{"role": "system", "content": "You are a Home Assistant expert."}]
     support.append_task_instruction(messages, "return the word ok")
     assert messages[-1] == {"role": "user", "content": "return the word ok"}
+
+
+class _LogMessage:
+    def __init__(self, role: str, content: object) -> None:
+        self.role = role
+        self.content = content
+
+
+def test_chat_messages_drop_empty_system_and_keep_the_task() -> None:
+    messages = support.chat_messages_from_log(
+        [
+            _LogMessage("system", ""),
+            _LogMessage("system", "You are a Home Assistant expert."),
+            _LogMessage("user", "return the word OK."),
+        ],
+        "return the word OK.",
+    )
+    assert messages == [
+        {"role": "system", "content": "You are a Home Assistant expert."},
+        {"role": "user", "content": "return the word OK."},
+    ]
+
+
+def test_option_numbers_reject_junk_and_truncate_floats() -> None:
+    options = {"max_tokens": 512.0, "temperature": "hot", "top_p": True}
+    assert support.option_int(options, "max_tokens", 128) == 512
+    assert support.option_float(options, "temperature", 1.0) == 1.0
+    assert support.option_float(options, "top_p", 0.9) == 0.9
