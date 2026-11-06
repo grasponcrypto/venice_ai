@@ -109,6 +109,15 @@ _TTS_MV_SEP = " → "
 # it is parsed on submit and stored as CONF_TTS_MODEL + CONF_TTS_VOICE.
 _CONF_TTS_MODEL_VOICE = "tts_model_voice"
 
+
+def _ensure_assist_fallback(
+    api_options: list[SelectOptionDict],
+) -> list[SelectOptionDict]:
+    """Add the Assist API only when discovery found no APIs."""
+    if not api_options:
+        api_options.append(SelectOptionDict(label="Assist", value="assist"))
+    return api_options
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): cv.string,
@@ -569,7 +578,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 # API not available on this HA instance — skip silently.
                 pass
 
-        if len(api_options) == 1:
+        if not api_options:
             # Nothing discovered at all; add "assist" as a best-effort fallback
             # so the user is never left with only "None".  The conversation
             # entity will log a warning if the API turns out not to exist at
@@ -577,7 +586,7 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             _LOGGER.debug(
                 "No LLM APIs discovered; adding 'assist' as best-effort fallback"
             )
-            api_options.append(SelectOptionDict(label="Assist", value="assist"))
+            _ensure_assist_fallback(api_options)
 
         return api_options
 
