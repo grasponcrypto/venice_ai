@@ -134,7 +134,7 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     api_key=user_input[CONF_API_KEY],
                     http_client=get_async_client(self.hass),
                 ) as client:
-                    models_response = await client.models.list()
+                    models_response = await client.models.list(force_refresh=True)
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
 
@@ -181,7 +181,7 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     api_key=user_input[CONF_API_KEY],
                     http_client=get_async_client(self.hass),
                 ) as client:
-                    models_response = await client.models.list()
+                    models_response = await client.models.list(force_refresh=True)
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
 

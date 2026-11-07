@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import json
 import logging
 import time
@@ -72,10 +74,11 @@ def _sanitize_header_value(value: str | None) -> str:
 
 # PERF-1: process-wide cache of model lists. Multiple client instances (e.g.
 # across config entries or per-test harnesses) reuse a single result for
-# CACHE_TTL_SECONDS. The cache stores plain dicts so it is independent of any
+# _PROCESS_MODEL_CACHE_TTL. The cache stores plain dicts independently of any
 # specific httpx client lifetime.
-_PROCESS_MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
-_PROCESS_MODEL_CACHE_TTL = 3600  # seconds; see also Models._CACHE_TTL_SECONDS
+_PROCESS_MODEL_CACHE: dict[tuple[str, bytes, str], tuple[float, list[dict]]] = {}
+_PROCESS_MODEL_CACHE_TTL = 3600
+_MODEL_CACHE_GENERATION: dict[tuple[str, bytes, str], int] = {}
 
 
 @dataclass
@@ -429,24 +432,29 @@ class ChatCompletions:
 class Models:
     """Models API for Venice AI with TTL caching."""
 
-    _CACHE_TTL_SECONDS = 3600  # 1 hour
-
     def __init__(self, client: "AsyncVeniceAIClient") -> None:
         """Initialize models API."""
         self.client = client
-        self._cache: dict[str, tuple[list[dict], float]] = {}
 
-    async def list(self, model_type: str = "text") -> list[dict]:
+    async def list(
+        self, model_type: str = "text", *, force_refresh: bool = False
+    ) -> list[dict]:
         """List available models with TTL caching.
 
-        PERF-1: consults a process-wide cache first so multiple client
-        instances (config entries, tests) share one network round-trip per
-        model_type per TTL window. Falls back to the per-instance cache
-        (``self._cache``) and then to the live API if both are cold.
+        Cached results are scoped to the endpoint, credential and model type.
+        Force a live request when validating credentials.
         """
         now = time.monotonic()
-        # PERF-1: process-wide cache check (keyed by model_type)
-        global_cached = _PROCESS_MODEL_CACHE.get(model_type)
+        key = (
+            self.client._base_url,
+            hashlib.sha256(self.client._api_key.encode()).digest(),
+            model_type,
+        )
+        if force_refresh:
+            _PROCESS_MODEL_CACHE.pop(key, None)
+            _MODEL_CACHE_GENERATION[key] = _MODEL_CACHE_GENERATION.get(key, 0) + 1
+        generation = _MODEL_CACHE_GENERATION.get(key, 0)
+        global_cached = _PROCESS_MODEL_CACHE.get(key)
         if global_cached is not None:
             timestamp, models = global_cached
             if now - timestamp < _PROCESS_MODEL_CACHE_TTL:
@@ -455,14 +463,7 @@ class Models:
                     model_type,
                     len(models),
                 )
-                return models
-        cached = self._cache.get(model_type)
-        if cached is not None:
-            models, timestamp = cached
-            if now - timestamp < self._CACHE_TTL_SECONDS:
-                _LOGGER.debug("Returning cached %s models (%d entries, age=%.0fs)", model_type, len(models), now - timestamp)
-                return models
-            _LOGGER.debug("Cache expired for %s models, fetching fresh", model_type)
+                return copy.deepcopy(models)
 
         url = f"{self.client._base_url}/models"
         _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
@@ -476,10 +477,9 @@ class Models:
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
-            self._cache[model_type] = (models, now)
-            # PERF-1: write through to process-wide cache so other clients in
-            # the same Python process can reuse this result.
-            _PROCESS_MODEL_CACHE[model_type] = (now, models)
+            # An older in-flight request must not undo a forced validation.
+            if _MODEL_CACHE_GENERATION.get(key, 0) == generation:
+                _PROCESS_MODEL_CACHE[key] = (time.monotonic(), copy.deepcopy(models))
             _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:
