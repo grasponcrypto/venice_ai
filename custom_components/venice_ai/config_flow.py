@@ -115,6 +115,9 @@ def _ensure_assist_fallback(
 ) -> list[SelectOptionDict]:
     """Add the Assist API only when discovery found no APIs."""
     if not api_options:
+        _LOGGER.debug(
+            "No LLM APIs discovered; adding 'assist' as best-effort fallback"
+        )
         api_options.append(SelectOptionDict(label="Assist", value="assist"))
     return api_options
 
@@ -578,15 +581,11 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 # API not available on this HA instance — skip silently.
                 pass
 
-        if not api_options:
-            # Nothing discovered at all; add "assist" as a best-effort fallback
-            # so the user is never left with only "None".  The conversation
-            # entity will log a warning if the API turns out not to exist at
-            # runtime.
-            _LOGGER.debug(
-                "No LLM APIs discovered; adding 'assist' as best-effort fallback"
-            )
-            _ensure_assist_fallback(api_options)
+        # Nothing discovered at all; add "assist" as a best-effort fallback
+        # so the user is never left with only "None".  The conversation
+        # entity will log a warning if the API turns out not to exist at
+        # runtime.
+        _ensure_assist_fallback(api_options)
 
         return api_options
 

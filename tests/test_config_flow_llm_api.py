@@ -27,12 +27,38 @@ def _load_fallback_helper() -> types.ModuleType:
         return {"label": label, "value": value}
 
     module.__dict__["SelectOptionDict"] = select_option_dict
+    module.__dict__["_LOGGER"] = types.SimpleNamespace(debug=lambda *args: None)
     module.__dict__["list"] = list
     exec(  # noqa: S102 - execute the AST-isolated helper under test.
         compile(ast.Module(body=[helper], type_ignores=[]), str(CONFIG_FLOW_PATH), "exec"),
         module.__dict__,
     )
     return module
+
+
+def test_fetch_llm_api_options_always_applies_fallback() -> None:
+    tree = ast.parse(CONFIG_FLOW_PATH.read_text(encoding="utf-8"))
+    fetch_method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_fetch_llm_api_options"
+    )
+
+    fallback_calls = [
+        node
+        for node in ast.walk(fetch_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_ensure_assist_fallback"
+    ]
+
+    assert len(fallback_calls) == 1
+    assert isinstance(fetch_method.body[-2], ast.Expr)
+    final_call = fetch_method.body[-2].value
+    assert isinstance(final_call, ast.Call)
+    assert isinstance(final_call.func, ast.Name)
+    assert final_call.func.id == "_ensure_assist_fallback"
 
 
 def test_empty_discovery_adds_assist_fallback() -> None:
