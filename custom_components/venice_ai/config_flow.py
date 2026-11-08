@@ -518,6 +518,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                         SelectOptionDict(label=getattr(api, "name", api.id), value=api.id)
                     )
                 _LOGGER.debug("Found %d LLM API(s) via async_get_apis", len(apis))
+                # Only return if we actually discovered something; otherwise fall through.
+                if api_options:
+                    return api_options
             except Exception as err:
                 _LOGGER.debug("async_get_apis failed: %s", err)
 
@@ -537,6 +540,8 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     _LOGGER.debug(
                         "Found %d LLM API(s) via async_get_api_list", len(api_ids)
                     )
+                    if api_options:
+                        return api_options
             except Exception as err:
                 _LOGGER.debug("async_get_api_list failed: %s", err)
 
