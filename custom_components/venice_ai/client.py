@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -71,31 +72,13 @@ def _sanitize_header_value(value: str | None) -> str:
     return value.replace("\r", "").replace("\n", "")
 
 
-# PERF-1: process-wide cache of model lists. Multiple client instances that
-# share a credential reuse one result for CACHE_TTL_SECONDS. The key is a
-# fingerprint of the API key plus the model type, so one entry cannot answer
-# another entry's list or auth check. The cache stores plain dicts so it is
-# independent of any specific httpx client lifetime.
-_PROCESS_MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
-_PROCESS_MODEL_CACHE_TTL = 3600  # seconds; see also Models._CACHE_TTL_SECONDS
-
-
-def _model_cache_identity(api_key: str) -> str:
-    """Fingerprint a credential without storing the raw key in the cache key."""
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
-
-
-def _model_cache_key(api_key: str, model_type: str) -> str:
-    """Cache key for one credential and one model type."""
-    return f"{_model_cache_identity(api_key)}:{model_type}"
-
-
-def _drop_model_cache(api_key: str) -> None:
-    """Forget cached model lists for this credential after an auth failure."""
-    prefix = f"{_model_cache_identity(api_key)}:"
-    for key in list(_PROCESS_MODEL_CACHE):
-        if key.startswith(prefix):
-            _PROCESS_MODEL_CACHE.pop(key, None)
+# PERF-1: process-wide cache of model lists. Multiple client instances (e.g.
+# across config entries or per-test harnesses) reuse a single result for
+# _PROCESS_MODEL_CACHE_TTL. The cache stores plain dicts independently of any
+# specific httpx client lifetime.
+_PROCESS_MODEL_CACHE: dict[tuple[str, bytes, str], tuple[float, list[dict]]] = {}
+_PROCESS_MODEL_CACHE_TTL = 3600
+_MODEL_CACHE_GENERATION: dict[tuple[str, bytes, str], int] = {}
 
 
 @dataclass
@@ -449,44 +432,38 @@ class ChatCompletions:
 class Models:
     """Models API for Venice AI with TTL caching."""
 
-    _CACHE_TTL_SECONDS = 3600  # 1 hour
-
     def __init__(self, client: "AsyncVeniceAIClient") -> None:
         """Initialize models API."""
         self.client = client
-        self._cache: dict[str, tuple[list[dict], float]] = {}
 
-    async def list(self, model_type: str = "text", *, force_refresh: bool = False) -> list[dict]:
+    async def list(
+        self, model_type: str = "text", *, force_refresh: bool = False
+    ) -> list[dict]:
         """List available models with TTL caching.
 
-        PERF-1: consults a process-wide cache first so clients that share an
-        API key share one network round-trip per model_type per TTL window.
-        The cache is keyed by a fingerprint of that key, so a warm list from
-        one config entry cannot validate a different key. ``force_refresh``
-        skips both caches; setup and the config flow use it so a revoked key
-        is not accepted from a list fetched while the key was still valid.
+        Cached results are scoped to the endpoint, credential and model type.
+        Force a live request when validating credentials.
         """
         now = time.monotonic()
-        cache_key = _model_cache_key(self.client._api_key, model_type)
-        if not force_refresh:
-            # PERF-1: process-wide cache check (keyed by credential + model_type)
-            global_cached = _PROCESS_MODEL_CACHE.get(cache_key)
-            if global_cached is not None:
-                timestamp, models = global_cached
-                if now - timestamp < _PROCESS_MODEL_CACHE_TTL:
-                    _LOGGER.debug(
-                        "PERF-1: process-wide cache hit for %s models (%d entries)",
-                        model_type,
-                        len(models),
-                    )
-                    return models
-            cached = self._cache.get(model_type)
-            if cached is not None:
-                models, timestamp = cached
-                if now - timestamp < self._CACHE_TTL_SECONDS:
-                    _LOGGER.debug("Returning cached %s models (%d entries, age=%.0fs)", model_type, len(models), now - timestamp)
-                    return models
-                _LOGGER.debug("Cache expired for %s models, fetching fresh", model_type)
+        key = (
+            self.client._base_url,
+            hashlib.sha256(self.client._api_key.encode()).digest(),
+            model_type,
+        )
+        if force_refresh:
+            _PROCESS_MODEL_CACHE.pop(key, None)
+            _MODEL_CACHE_GENERATION[key] = _MODEL_CACHE_GENERATION.get(key, 0) + 1
+        generation = _MODEL_CACHE_GENERATION.get(key, 0)
+        global_cached = _PROCESS_MODEL_CACHE.get(key)
+        if global_cached is not None:
+            timestamp, models = global_cached
+            if now - timestamp < _PROCESS_MODEL_CACHE_TTL:
+                _LOGGER.debug(
+                    "PERF-1: process-wide cache hit for %s models (%d entries)",
+                    model_type,
+                    len(models),
+                )
+                return copy.deepcopy(models)
 
         url = f"{self.client._base_url}/models"
         _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
@@ -500,17 +477,13 @@ class Models:
             response.raise_for_status()
             model_data = response.json()
             models = model_data.get("data", [])
-            self._cache[model_type] = (models, now)
-            # PERF-1: write through to process-wide cache so other clients in
-            # the same Python process can reuse this result for this key.
-            _PROCESS_MODEL_CACHE[cache_key] = (now, models)
+            # An older in-flight request must not undo a forced validation.
+            if _MODEL_CACHE_GENERATION.get(key, 0) == generation:
+                _PROCESS_MODEL_CACHE[key] = (time.monotonic(), copy.deepcopy(models))
             _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
             return models
         except httpx.HTTPStatusError as err:
             error_detail = getattr(err.response, "text", str(err))
-            if err.response.status_code in (401, 403):
-                _drop_model_cache(self.client._api_key)
-                self._cache.pop(model_type, None)
             _LOGGER.error("Venice AI Models API HTTP error %s: %s", err.response.status_code, error_detail)
             raise _categorize_http_error(err.response.status_code, error_detail, "fetching models") from err
         except httpx.RequestError as err:

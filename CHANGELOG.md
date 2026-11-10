@@ -6,6 +6,10 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## [Unreleased]
 
+### Fixed
+- Model catalogs are cached per endpoint and credential, and callers get their own copy. A live validation cannot be undone by an older in-flight list.
+- Assist is added as an LLM API only when discovery finds no APIs, so a single discovered API is not duplicated.
+
 ## [1.1.1-dev.2] - 2026-11-06
 
 ### Fixed
