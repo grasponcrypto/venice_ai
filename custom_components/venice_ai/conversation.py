@@ -23,7 +23,7 @@ from homeassistant.components.conversation import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import intent, llm, device_registry as dr, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -55,6 +55,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+_INVALID_TOOL_NAME = "__invalid_tool_call__"
 
 # Default system prompt for Venice AI - short personality string only.
 # HA's llm.DEFAULT_INSTRUCTIONS_PROMPT handles entity states, date/time, and tool instructions.
@@ -484,6 +486,57 @@ def _user_message_already_present(chat_log: Any, text: str) -> bool:
             return False
     return False
 
+
+def _normalize_tool_call(
+    tool_call_data: Any, iteration: int, index: int
+) -> tuple[dict[str, Any], str | None]:
+    """Normalize a model tool call and report structural validation errors.
+
+    The assistant message and its tool result must use the same call ID. A
+    malformed model response may omit that ID or other required fields, so we
+    repair the serialized assistant call before adding it to the chat log.
+    """
+    raw_call = tool_call_data if isinstance(tool_call_data, dict) else {}
+    normalized = dict(raw_call)
+    errors: list[str] = []
+
+    call_id = raw_call.get("id")
+    if not isinstance(call_id, str) or not call_id.strip():
+        call_id = f"venice_malformed_tool_call_{iteration}_{index}"
+        errors.append("missing call id")
+    normalized["id"] = call_id
+
+    if raw_call.get("type", "function") != "function":
+        errors.append("invalid call type")
+    normalized["type"] = "function"
+
+    raw_function = raw_call.get("function")
+    function = dict(raw_function) if isinstance(raw_function, dict) else {}
+    if not isinstance(raw_function, dict):
+        errors.append("missing function data")
+
+    tool_name = function.get("name")
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        tool_name = _INVALID_TOOL_NAME
+        errors.append("missing function name")
+    function["name"] = tool_name
+
+    arguments = function.get("arguments", "{}")
+    if not isinstance(arguments, str):
+        errors.append("arguments must be a JSON string")
+        try:
+            arguments = json.dumps(arguments)
+        except (TypeError, ValueError):
+            arguments = "{}"
+    else:
+        try:
+            json.loads(arguments)
+        except json.JSONDecodeError:
+            errors.append("arguments are not valid JSON")
+    function["arguments"] = arguments
+    normalized["function"] = function
+
+    return normalized, "; ".join(errors) or None
 
 
 def _convert_chat_log_to_venice_messages(
@@ -984,8 +1037,21 @@ class VeniceAIConversationEntity(ConversationEntity):
                         assistant_response_content = text_content
                     break
 
-                # Keep tool calls on AssistantContent when this HA version supports
-                # that field, so the next request can replay the original call ids.
+                # Repair malformed calls before storing them so the assistant
+                # message and its tool result share a call id.
+                normalized_tool_calls: list[dict[str, Any]] = []
+                malformed_tool_call_errors: list[str | None] = []
+                for index, raw_tool_call in enumerate(tool_calls):
+                    normalized_call, malformed_error = _normalize_tool_call(
+                        raw_tool_call, iteration, index
+                    )
+                    normalized_tool_calls.append(normalized_call)
+                    malformed_tool_call_errors.append(malformed_error)
+                tool_calls = normalized_tool_calls
+
+                # Keep repaired tool calls on AssistantContent when this HA
+                # version supports that field, so the next request can replay
+                # the same call ids. Older builds still get the JSON payload.
                 chat_log.content.append(_make_assistant_content(text_content, tool_calls))
 
                 _LOGGER.debug(
@@ -995,18 +1061,24 @@ class VeniceAIConversationEntity(ConversationEntity):
                     [tc.get("function", {}).get("name") for tc in tool_calls],
                 )
 
-                for tool_call_data in tool_calls:
-                    call_id = tool_call_data.get("id")
-                    func_details = tool_call_data.get("function", {})
-                    call_type = tool_call_data.get("type", "function")
-                    tool_name = func_details.get("name")
-                    tool_args_str = func_details.get("arguments", "{}")
+                for index, tool_call_data in enumerate(tool_calls):
+                    call_id = tool_call_data["id"]
+                    func_details = tool_call_data["function"]
+                    tool_name = func_details["name"]
+                    tool_args_str = func_details["arguments"]
 
-                    if not call_id or call_type != "function" or not func_details:
-                        _LOGGER.warning("Skipping malformed tool call: %s", tool_call_data)
-                        continue
-                    if not tool_name:
-                        _LOGGER.warning("Tool call missing name: %s", tool_call_data)
+                    malformed_error = malformed_tool_call_errors[index]
+                    if malformed_error:
+                        _LOGGER.warning(
+                            "Malformed tool call (%s): %s", malformed_error, tool_call_data
+                        )
+                        chat_log.content.append(
+                            _make_tool_result_content(
+                                tool_name,
+                                call_id,
+                                {"error": f"Malformed tool call: {malformed_error}"},
+                            )
+                        )
                         continue
 
                     _LOGGER.debug(
@@ -1018,9 +1090,16 @@ class VeniceAIConversationEntity(ConversationEntity):
 
                     try:
                         tool_args = json.loads(tool_args_str)
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, TypeError):
                         _LOGGER.error(
                             "Failed JSON parse for tool %s args: %s", tool_name, tool_args_str
+                        )
+                        chat_log.content.append(
+                            _make_tool_result_content(
+                                tool_name,
+                                call_id,
+                                {"error": f"Tool {tool_name} arguments are not valid JSON"},
+                            )
                         )
                         continue
 
