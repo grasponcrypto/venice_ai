@@ -723,8 +723,11 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     SelectSelectorConfig(
                         options=[
                             SelectOptionDict(label="MP3", value="mp3"),
+                            SelectOptionDict(label="Opus", value="opus"),
+                            SelectOptionDict(label="AAC", value="aac"),
+                            SelectOptionDict(label="FLAC", value="flac"),
                             SelectOptionDict(label="WAV", value="wav"),
-                            SelectOptionDict(label="OGG", value="ogg"),
+                            SelectOptionDict(label="PCM", value="pcm"),
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
                     )

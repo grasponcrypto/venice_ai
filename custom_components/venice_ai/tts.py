@@ -36,6 +36,7 @@ from .const import (
     configured_str,
 )
 from .entity_name import publish_configured_name
+from .model_catalog import catalog_fetched, resolve_tts_speech, speech_extension
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -128,30 +129,57 @@ class VeniceAITTS(TextToSpeechEntity):
             "tts_speed": options.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED),
         }
 
-    def _get_tts_option(
-        self,
-        options: dict[str, Any] | None,
-        option_key: str,
-        config_key: str,
-        default: Any,
-    ) -> Any:
-        """Return a TTS option, falling back to config entry then recommended default."""
-        if options is None:
-            options = {}
-        return options.get(
-            option_key, self._config_entry.options.get(config_key, default)
+    def _resolve_speech(
+        self, message: str, options: dict[str, Any] | None
+    ) -> tuple[str, str, str, str, float]:
+        """Return text, model, voice, format, and speed Venice will accept.
+
+        Assist overrides the voice, and one saved format is shared by every
+        TTS model. An incompatible pair is HTTP 400, so substitute before the
+        request instead of failing the spoken reply.
+        """
+        options = options or {}
+        config = self._config_entry.options
+        runtime = getattr(self._config_entry, "runtime_data", None)
+        coordinator = getattr(runtime, "coordinator", None)
+        data = getattr(coordinator, "data", None)
+        models = data.get("audio_models") if isinstance(data, dict) else None
+        saved_model = config.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        saved_speed = config.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
+        resolved = resolve_tts_speech(
+            text=message,
+            model=options.get(CONF_TTS_MODEL, saved_model),
+            voice=options.get(ATTR_VOICE, ""),
+            configured_voice=config.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE),
+            response_format=options.get(ATTR_AUDIO_OUTPUT, ""),
+            configured_format=config.get(
+                CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+            ),
+            speed=options.get(CONF_TTS_SPEED, saved_speed),
+            models=models,
+            catalog_ok=catalog_fetched(data, "tts_catalog_ok", models, "tts"),
+            fallback_model=RECOMMENDED_TTS_MODEL,
+            fallback_voice=RECOMMENDED_TTS_VOICE,
+        )
+        for note in resolved.notes:
+            _LOGGER.warning("Venice TTS request adjusted: %s", note)
+        if not resolved.text:
+            raise HomeAssistantError("No TTS message to speak")
+        return (
+            resolved.text,
+            resolved.model,
+            resolved.voice,
+            speech_extension(resolved.response_format),
+            resolved.speed,
         )
 
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any] | None = None
     ) -> TtsAudioType:
         """Generate TTS audio."""
-        voice = self._get_tts_option(options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
-        model = self._get_tts_option(options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        response_format = self._get_tts_option(
-            options, ATTR_AUDIO_OUTPUT, CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+        message, model, voice, response_format, speed = self._resolve_speech(
+            message, options
         )
-        speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
         _tts_start = time.monotonic()
         _LOGGER.debug(
@@ -245,12 +273,12 @@ class VeniceAITTS(TextToSpeechEntity):
         message = "".join([chunk async for chunk in request.message_gen])
         options = dict(request.options or {})
 
-        voice = self._get_tts_option(options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
-        model = self._get_tts_option(options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        response_format = self._get_tts_option(
-            options, ATTR_AUDIO_OUTPUT, CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+        if not message.strip():
+            raise HomeAssistantError(f"No TTS message for {self.entity_id}")
+
+        message, model, voice, response_format, speed = self._resolve_speech(
+            message, options
         )
-        speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
 
         _tts_start = time.monotonic()
         _LOGGER.debug(
@@ -259,9 +287,6 @@ class VeniceAITTS(TextToSpeechEntity):
             len(message),
             voice, model, response_format, speed,
         )
-
-        if not message:
-            raise HomeAssistantError(f"No TTS message for {self.entity_id}")
 
         _LOGGER.debug(
             "[PERF-TTS] [+%.3fs] Opening streaming speech connection to Venice AI",

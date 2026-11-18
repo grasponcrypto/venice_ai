@@ -4,11 +4,26 @@ All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-## [Unreleased]
+## [1.1.1-dev.4] - 2026-11-18
+
+### Fixed
+- TTS selects a voice and audio format supported by the active model, including when Assist supplies a pipeline voice. Formats are validated against the model catalog, WAV-only models no longer receive the global MP3 setting, and speech speed is sent as a bounded number.
+- Speech requests reject empty input, remove null bytes, and limit input to Venice's 4096-character limit.
+- HTTP 400 speech errors now log the API response even when it is mislabeled with an audio content type, along with the requested model, voice, and format. A streaming transport is still used for the actual HTTP connection.
+- A streaming-only HTTP 400 response retries once without the streaming flag instead of dropping the spoken response. Voice and format validation errors are reported without a duplicate request.
+
+## [1.1.1-dev.3] - 2026-11-11
 
 ### Fixed
 - Model catalogs are cached per endpoint and credential, and callers get their own copy. A live validation cannot be undone by an older in-flight list.
 - Assist is added as an LLM API only when discovery finds no APIs, so a single discovered API is not duplicated.
+- TTS streaming now sends the speech request with `stream=True` and closes the response when the caller stops reading. Speech and transcription requests use the same CR/LF-scrubbed Authorization header as chat.
+- TTS and speech-to-text repair checks use separate model catalogs. A failed TTS list no longer marks a working speech model unavailable, a later successful refresh clears a repair that no longer applies, and an authentication failure opens reauth once instead of on every refresh.
+- A malformed tool call records an error result before the next request, so Venice still sees a tool result for every tool call.
+- AI Task structured output sends the task schema as Venice `response_format` and in the prompt, then parses a fenced JSON reply.
+- A tool schema that cannot be converted is omitted instead of being sent as an empty object.
+- Removed the unused `todo.py` and `task_types.py` modules. They were not loaded as a platform and crashed on import.
+- GitHub Actions runs pytest and ruff, and the HACS and hassfest actions are pinned to commit SHAs.
 
 ## [1.1.1-dev.2] - 2026-11-06
 
@@ -147,7 +162,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev.2...HEAD
+[1.1.1-dev.3]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev.2...1.1.1-dev.3
 [1.1.1-dev.2]: https://github.com/grasponcrypto/venice_ai/compare/1.1.1-dev...1.1.1-dev.2
 [1.1.1-dev]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.6...1.1.1-dev
 [1.1.0-dev.6]: https://github.com/grasponcrypto/venice_ai/compare/1.1.0-dev.5...1.1.0-dev.6

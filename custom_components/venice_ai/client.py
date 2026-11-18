@@ -263,6 +263,7 @@ class ChatCompletions:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         stream_options: dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncGenerator[AsyncGenerator[ChatCompletionChunk, None], None]:
         """Create a streaming chat completion."""
         data = chat_completion_payload(
@@ -276,6 +277,7 @@ class ChatCompletions:
                 "tools": tools,
                 "tool_choice": tool_choice,
                 "stream_options": stream_options,
+                "response_format": response_format,
             },
             stream=True,
         )
@@ -494,6 +496,63 @@ class Models:
             raise VeniceAIError("Failed to decode models API response") from err
 
 
+def _speech_error_detail(raw: bytes | None, content_type: str, status: int) -> str:
+    """Return a loggable speech error, including JSON labeled as audio/*.
+
+    Venice sometimes answers HTTP 400 with ``Content-Type: audio/*`` and a
+    JSON body. Treating every audio response as opaque hid the validation
+    error (unsupported format, incompatible voice, streaming rejected).
+    """
+    if not raw:
+        return f"HTTP {status}"
+    text = raw.decode("utf-8", errors="replace").strip().replace("\x00", "")
+    sample = text[:200]
+    if not sample:
+        return f"HTTP {status}"
+    if sample.count("\ufffd") > len(sample) * 0.05:
+        return f"HTTP {status} ({content_type or 'no content-type'}, {len(raw)} bytes)"
+    printable = sum(ch.isprintable() or ch in "\n\r\t" for ch in sample)
+    if printable / len(sample) >= 0.85:
+        return text[:500]
+    return f"HTTP {status} ({content_type or 'no content-type'}, {len(raw)} bytes)"
+
+
+def _streaming_speech_should_retry(detail: str) -> bool:
+    """Return True when a streaming 400 should be retried as one audio file."""
+    lowered = detail.lower()
+    if "streaming" in lowered:
+        return True
+    # The body was not a useful API message. Voice/format failures name
+    # themselves; those must not be retried as if streaming were the cause.
+    if lowered.startswith("http 400") and not any(
+        token in lowered for token in ("voice", "format", "input", "model", "speed")
+    ):
+        return True
+    return False
+
+
+async def _read_speech_error(response: httpx.Response) -> str:
+    """Read a failed speech response, including a streaming body."""
+    status = response.status_code
+    content_type = response.headers.get("content-type", "")
+    try:
+        raw = await response.aread()
+    except Exception:
+        return f"HTTP {status}"
+    return _speech_error_detail(raw, content_type, status)
+
+
+def _speech_speed(speed: object) -> float:
+    """Coerce speed so a string from options is not sent as JSON text."""
+    try:
+        value = float(speed)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1.0
+    if value != value:
+        return 1.0
+    return min(4.0, max(0.25, value))
+
+
 class Speech:
     """Speech API for Venice AI."""
 
@@ -510,16 +569,18 @@ class Speech:
         speed: float = 1.0,
     ) -> bytes:
         """Generate speech audio from text (non-streaming)."""
+        speed_value = _speech_speed(speed)
         data = {
             "input": text,
             "model": model,
             "voice": voice,
             "response_format": audio_output,
-            "speed": speed,
+            "speed": speed_value,
         }
 
         audio_headers = {
-            "Authorization": f"Bearer {self.client._api_key}",
+            "Authorization": self.client.authorization_header(),
+            "Accept": "audio/*, application/json",
         }
 
         _gen_start = time.monotonic()
@@ -547,16 +608,15 @@ class Speech:
             return audio_data
 
         except httpx.HTTPStatusError as err:
-            error_detail = "Unknown error"
-            try:
-                if err.response.headers.get("content-type", "").startswith("audio/"):
-                    error_detail = f"HTTP {err.response.status_code} for audio request"
-                else:
-                    error_detail = err.response.text[:500]
-            except Exception:
-                error_detail = f"HTTP {err.response.status_code}"
-
-            _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
+            error_detail = await _read_speech_error(err.response)
+            _LOGGER.error(
+                "Venice AI Speech API HTTP error %s (model=%s voice=%s format=%s): %s",
+                err.response.status_code,
+                model,
+                voice,
+                audio_output,
+                error_detail,
+            )
             categorized = _categorize_http_error(
                 err.response.status_code, error_detail, "generating speech"
             )
@@ -576,70 +636,103 @@ class Speech:
         audio_output: str = "mp3",
         speed: float = 1.0,
     ) -> AsyncGenerator[bytes, None]:
-        """Generate speech audio from text with streaming chunks."""
+        """Generate speech audio from text with streaming chunks.
+
+        The request is sent with ``stream=True``. The buffered retry helper
+        would download the whole file before the first chunk is yielded.
+        """
+        speed_value = _speech_speed(speed)
         data = {
             "input": text,
             "model": model,
             "voice": voice,
             "response_format": audio_output,
-            "speed": speed,
+            "speed": speed_value,
             "streaming": True,
         }
 
         audio_headers = {
-            "Authorization": f"Bearer {self.client._api_key}",
+            "Authorization": self.client.authorization_header(),
+            "Accept": "audio/*, application/json",
         }
         self.client.metrics.record_request()
-
+        response: httpx.Response | None = None
+        _tts_stream_start = time.monotonic()
+        _tts_first_chunk_t: float | None = None
+        _tts_chunk_count = 0
+        _tts_total_bytes = 0
         try:
-            response = await self.client._async_request_with_retry(
+            request = self.client._http_client.build_request(
                 "POST",
-                "/audio/speech",
+                f"{self.client._base_url}/audio/speech",
                 headers=audio_headers,
                 json=data,
                 timeout=DEFAULT_TTS_TIMEOUT,
             )
+            response = await self.client._http_client.send(request, stream=True)
             response.raise_for_status()
-
-            _tts_stream_start = time.monotonic()
-            _tts_first_chunk_t: float | None = None
-            _tts_chunk_count = 0
-            _tts_total_bytes = 0
-            _LOGGER.debug("[PERF-HTTP] POST /audio/speech (stream) — connection established, streaming chunks")
-            try:
-                async for chunk in response.aiter_bytes():
-                    if _tts_first_chunk_t is None:
-                        _tts_first_chunk_t = time.monotonic() - _tts_stream_start
-                        _LOGGER.debug(
-                            "[PERF-HTTP] POST /audio/speech (stream) — first audio chunk received in %.3fs",
-                            _tts_first_chunk_t,
-                        )
-                    _tts_chunk_count += 1
-                    _tts_total_bytes += len(chunk)
-                    yield chunk
-                _LOGGER.debug(
-                    "[PERF-HTTP] POST /audio/speech (stream) — complete: %d chunks, %d bytes total in %.3fs",
-                    _tts_chunk_count,
-                    _tts_total_bytes,
-                    time.monotonic() - _tts_stream_start,
-                )
-            except httpx.TransportError as err:
-                _LOGGER.error("Streaming TTS transport error: %s", err)
-                network_err = NetworkError(f"Streaming TTS interrupted: {err}")
-                self.client.metrics.record_error(network_err)
-                raise network_err from err
-
+            _LOGGER.debug(
+                "[PERF-HTTP] POST /audio/speech (stream) — connection established, streaming chunks"
+            )
+            async for chunk in response.aiter_bytes():
+                if _tts_first_chunk_t is None:
+                    _tts_first_chunk_t = time.monotonic() - _tts_stream_start
+                    _LOGGER.debug(
+                        "[PERF-HTTP] POST /audio/speech (stream) — first audio chunk received in %.3fs",
+                        _tts_first_chunk_t,
+                    )
+                _tts_chunk_count += 1
+                _tts_total_bytes += len(chunk)
+                yield chunk
+            _LOGGER.debug(
+                "[PERF-HTTP] POST /audio/speech (stream) — complete: %d chunks, %d bytes total in %.3fs",
+                _tts_chunk_count,
+                _tts_total_bytes,
+                time.monotonic() - _tts_stream_start,
+            )
+        except httpx.TransportError as err:
+            _LOGGER.error("Streaming TTS transport error: %s", err)
+            network_err = NetworkError(f"Streaming TTS interrupted: {err}")
+            self.client.metrics.record_error(network_err)
+            raise network_err from err
         except httpx.HTTPStatusError as err:
-            error_detail = "Unknown error"
-            try:
-                if err.response.headers.get("content-type", "").startswith("audio/"):
-                    error_detail = f"HTTP {err.response.status_code} for audio request"
+            error_detail = await _read_speech_error(err.response)
+            _LOGGER.error(
+                "Venice AI Speech API HTTP error %s (model=%s voice=%s format=%s streaming=True): %s",
+                err.response.status_code,
+                model,
+                voice,
+                audio_output,
+                error_detail,
+            )
+            if err.response.status_code == 400 and _streaming_speech_should_retry(
+                error_detail
+            ):
+                _LOGGER.warning(
+                    "Venice rejected streaming speech (%s); retrying as one audio file",
+                    error_detail,
+                )
+                if response is not None:
+                    await response.aclose()
+                    response = None
+                try:
+                    audio = await self.generate(
+                        text,
+                        voice=voice,
+                        model=model,
+                        audio_output=audio_output,
+                        speed=speed_value,
+                    )
+                except VeniceAIError:
+                    _LOGGER.error(
+                        "Non-streaming speech retry failed after streaming HTTP %s: %s",
+                        err.response.status_code,
+                        error_detail,
+                    )
                 else:
-                    error_detail = err.response.text[:500]
-            except Exception:
-                error_detail = f"HTTP {err.response.status_code}"
-
-            _LOGGER.error("Venice AI Speech API HTTP error %s: %s", err.response.status_code, error_detail)
+                    if audio:
+                        yield audio
+                    return
             categorized = _categorize_http_error(
                 err.response.status_code, error_detail, "streaming speech"
             )
@@ -647,9 +740,14 @@ class Speech:
             raise categorized from err
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI Speech API request error: %s", err)
-            network_err = NetworkError(f"Request error generating streaming speech: {err}")
+            network_err = NetworkError(
+                f"Request error generating streaming speech: {err}"
+            )
             self.client.metrics.record_error(network_err)
             raise network_err from err
+        finally:
+            if response is not None:
+                await response.aclose()
 
 
 class Transcriptions:
@@ -677,7 +775,7 @@ class Transcriptions:
         }
 
         multipart_headers = {
-            "Authorization": f"Bearer {self.client._api_key}",
+            "Authorization": self.client.authorization_header(),
         }
 
         _stt_start = time.monotonic()
@@ -977,6 +1075,10 @@ class AsyncVeniceAIClient:
         self.speech = Speech(self)
         self.transcriptions = Transcriptions(self)
         self.images = Images(self)
+
+    def authorization_header(self) -> str:
+        """Return the CR/LF-scrubbed bearer value used on every endpoint."""
+        return self._headers["Authorization"]
 
     async def _async_request_with_retry(
         self,

@@ -8,6 +8,7 @@ service working on that core and on older cores that still take only
 
 from __future__ import annotations
 
+import json
 import inspect
 from typing import Any
 
@@ -120,3 +121,78 @@ def _structure_provided(structure: Any) -> bool:
     if isinstance(structure, str) and not structure.strip():
         return False
     return True
+
+
+def structure_schema(structure: Any) -> dict[str, Any] | None:
+    """Return a JSON schema dict for a task structure, or None."""
+    if not _structure_provided(structure):
+        return None
+    if isinstance(structure, str):
+        try:
+            parsed = json.loads(structure)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    if isinstance(structure, dict):
+        nested = structure.get("json_schema")
+        if structure.get("type") == "json_schema" and isinstance(nested, dict):
+            return nested
+        return structure
+    try:
+        from voluptuous_openapi import convert
+    except ImportError:
+        return None
+    try:
+        converted = convert(structure)
+    except Exception:
+        return None
+    return converted if isinstance(converted, dict) else None
+
+
+def venice_response_format(structure: Any) -> dict[str, Any] | None:
+    """Return the Venice ``response_format`` for a task structure.
+
+    Venice expects the schema object itself under ``json_schema``, not the
+    OpenAI wrapper of ``name`` / ``schema`` / ``strict``.
+    """
+    schema = structure_schema(structure)
+    if schema is None:
+        return None
+    return {"type": "json_schema", "json_schema": schema}
+
+
+def append_structure_instruction(messages: list[dict[str, Any]], structure: Any) -> None:
+    """Tell the model which JSON schema to return.
+
+    ``response_format`` is the contract Venice enforces. The message is the
+    fallback for a model that still answers in prose.
+    """
+    if not _structure_provided(structure):
+        return
+    schema = structure_schema(structure)
+    if schema is not None:
+        body = json.dumps(schema, ensure_ascii=False)
+    elif isinstance(structure, str):
+        body = structure.strip()
+    else:
+        body = str(structure)
+    messages.insert(
+        0,
+        {
+            "role": "system",
+            "content": "Respond with JSON only, matching this schema: " + body,
+        },
+    )
+
+
+def parse_structured_response(text: str) -> Any:
+    """Parse a structured reply, including one wrapped in a Markdown fence."""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    return json.loads(stripped)

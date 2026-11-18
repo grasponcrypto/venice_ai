@@ -317,11 +317,7 @@ def _convert_tool_parameters(
         if formatted:
             return {"type": "object", "properties": formatted}
 
-    _LOGGER.warning(
-        "Could not convert parameters for tool %s; sending an empty object schema",
-        getattr(tool, "name", "?"),
-    )
-    return {"type": "object", "properties": {}}
+    return None
 
 
 def _tool_result_data(result: Any) -> Any:
