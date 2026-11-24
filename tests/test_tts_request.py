@@ -154,10 +154,50 @@ def test_audio_labeled_json_error_is_not_hidden() -> None:
 def test_unreadable_audio_400_can_be_retried_without_streaming() -> None:
     detail = client._speech_error_detail(b"\xff\xfb\x90\x00" * 40, "audio/mpeg", 400)
     assert detail.startswith("HTTP 400")
+    assert "unparseable body" in detail
+    assert "\ufffd" not in detail
     assert client._streaming_speech_should_retry(detail) is True
     assert client._streaming_speech_should_retry(
         "streaming is not supported for this model"
     )
+
+
+def test_speech_error_detail_redacts_echoed_input() -> None:
+    import json
+
+    spoken = "The office light is off and the back door is unlocked."
+    body = json.dumps(
+        {
+            "error": {
+                "message": f"Invalid input: {spoken}",
+                "code": "invalid_input",
+                "type": "invalid_request_error",
+                "input": spoken,
+            }
+        }
+    ).encode()
+    detail = client._speech_error_detail(body, "audio/mpeg", 400, input_text=spoken)
+    assert spoken not in detail
+    assert "[redacted]" in detail
+    assert "code=invalid_input" in detail
+    assert "type=invalid_request_error" in detail
+    assert client._streaming_speech_should_retry(detail) is False
+
+
+def test_speech_error_detail_caps_long_fields() -> None:
+    import json
+
+    body = json.dumps({"error": {"message": "x" * 500}}).encode()
+    detail = client._speech_error_detail(body, "audio/mpeg", 400)
+    assert "x" * 200 in detail
+    assert "x" * 201 not in detail
+
+
+def test_speech_error_detail_skips_redaction_of_short_input() -> None:
+    detail = client._speech_error_detail(
+        b'{"error":"Invalid input: the light"}', "audio/mpeg", 400, input_text="the"
+    )
+    assert "the light" in detail
 
 
 async def test_streaming_400_retries_without_the_streaming_flag() -> None:
@@ -242,3 +282,42 @@ async def test_streaming_uses_true_streaming_transport() -> None:
         venice._async_request_with_retry = fail_buffered_request
         chunks = [chunk async for chunk in venice.speech.generate_streaming("Done.")]
     assert chunks == [b"ID3audio"]
+
+
+async def test_speech_error_logs_do_not_include_echoed_input(caplog) -> None:
+    import json
+    import logging
+
+    import httpx
+    import pytest
+
+    spoken = "The office light is off and the back door is unlocked."
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            content=json.dumps(
+                {
+                    "error": {
+                        "message": f"Invalid input: {spoken}",
+                        "code": "invalid_input",
+                        "type": "invalid_request_error",
+                        "input": spoken,
+                    }
+                }
+            ).encode(),
+            headers={"content-type": "audio/mpeg"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        venice = client.AsyncVeniceAIClient("key", http_client=http)
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(client.VeniceAIError) as caught:
+                _ = [
+                    chunk
+                    async for chunk in venice.speech.generate_streaming(spoken)
+                ]
+
+    assert spoken not in caplog.text
+    assert spoken not in str(caught.value)
+    assert "[redacted]" in caplog.text

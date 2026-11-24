@@ -4,6 +4,11 @@ All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [1.1.1-dev.5] - 2026-11-24
+
+### Fixed
+- **TTS error logging:** A speech error body can echo the text that was spoken, which put private words into the log, the raised error, and the last-error sensor. Only the `message`, `code`, and `type` fields of a JSON body are kept now, each capped at 200 characters, and any echo of the input is replaced with `[redacted]`. Input shorter than four characters is left alone so the remaining error stays readable. A body that cannot be parsed is reported as `HTTP <status> (unparseable body, <content-type>)` instead of raw bytes. Reported in #76.
+
 ## [1.1.1-dev.4] - 2026-11-18
 
 ### Fixed

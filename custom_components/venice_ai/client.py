@@ -496,25 +496,125 @@ class Models:
             raise VeniceAIError("Failed to decode models API response") from err
 
 
-def _speech_error_detail(raw: bytes | None, content_type: str, status: int) -> str:
-    """Return a loggable speech error, including JSON labeled as audio/*.
+SPEECH_ERROR_FIELD_LIMIT = 200
+SPEECH_ERROR_BODY_LIMIT = 500
+_SPEECH_REDACTION_MIN_INPUT = 4
+
+
+def _decode_speech_body(raw: bytes | None) -> str:
+    """Decode a speech error body, dropping NUL padding."""
+    if not raw:
+        return ""
+    return raw.decode("utf-8", errors="replace").strip().replace("\x00", "")
+
+
+def _cap_speech_field(
+    value: str, limit: int = SPEECH_ERROR_FIELD_LIMIT
+) -> str:
+    """Cap a logged error field so a long body cannot flood the log."""
+    value = value.strip()
+    return value if len(value) <= limit else f"{value[:limit]}..."
+
+
+def _redact_speech_input(value: str, input_text: str | None) -> str:
+    """Replace the spoken input anywhere Venice echoes it back.
+
+    Short inputs are skipped: replacing a common word such as "the" would
+    make the remaining error unreadable without protecting anything. Both the
+    plain and the JSON-escaped form are replaced so the raw body string is
+    covered as well as parsed fields.
+    """
+    if not input_text:
+        return value
+    spoken = input_text.strip()
+    if len(spoken) < _SPEECH_REDACTION_MIN_INPUT:
+        return value
+    redacted = value.replace(spoken, "[redacted]")
+    escaped = json.dumps(spoken)[1:-1]
+    if escaped and escaped != spoken:
+        redacted = redacted.replace(escaped, "[redacted]")
+    return redacted
+
+
+def _parse_speech_error_fields(
+    text: str,
+) -> tuple[str | None, str | None, str | None] | None:
+    """Return ``(message, code, type)`` from a JSON error body, if parseable."""
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    message: object | None = None
+    code: object | None = None
+    error_type: object | None = None
+    error = data.get("error")
+    if isinstance(error, dict):
+        message = (
+            error.get("message")
+            or error.get("detail")
+            or error.get("description")
+        )
+        code = error.get("code")
+        error_type = error.get("type")
+    elif isinstance(error, str) and error:
+        message = error
+    if message is None:
+        message = data.get("message") or data.get("detail")
+    code = code or data.get("code")
+    error_type = error_type or data.get("type")
+    details = data.get("details")
+    if details:
+        detail_text = str(details)
+        message = f"{message}: {detail_text}" if message else detail_text
+
+    def _as_text(value: object | None) -> str | None:
+        if value is None:
+            return None
+        text_value = str(value).strip()
+        return text_value or None
+
+    return _as_text(message), _as_text(code), _as_text(error_type)
+
+
+def _speech_error_detail(
+    raw: bytes | None,
+    content_type: str,
+    status: int,
+    input_text: str | None = None,
+) -> str:
+    """Return a redacted, loggable speech error summary.
 
     Venice sometimes answers HTTP 400 with ``Content-Type: audio/*`` and a
-    JSON body. Treating every audio response as opaque hid the validation
-    error (unsupported format, incompatible voice, streaming rejected).
+    JSON body. Only the parsed ``message``, ``code``, and ``type`` fields are
+    kept, each capped, so a body that echoes the spoken input cannot leak it
+    into logs, exception messages, or the diagnostic sensor. Unparseable
+    bodies fall back to a marker instead of raw bytes.
     """
-    if not raw:
+    text = _decode_speech_body(raw)
+    if not text:
         return f"HTTP {status}"
-    text = raw.decode("utf-8", errors="replace").strip().replace("\x00", "")
-    sample = text[:200]
-    if not sample:
-        return f"HTTP {status}"
-    if sample.count("\ufffd") > len(sample) * 0.05:
-        return f"HTTP {status} ({content_type or 'no content-type'}, {len(raw)} bytes)"
-    printable = sum(ch.isprintable() or ch in "\n\r\t" for ch in sample)
-    if printable / len(sample) >= 0.85:
-        return text[:500]
-    return f"HTTP {status} ({content_type or 'no content-type'}, {len(raw)} bytes)"
+    fields = _parse_speech_error_fields(text)
+    if fields is None:
+        return f"HTTP {status} (unparseable body, {content_type or 'no content-type'})"
+
+    processed = [
+        _cap_speech_field(_redact_speech_input(value, input_text)) if value else None
+        for value in fields
+    ]
+    message, code, error_type = processed
+    parts = []
+    if message:
+        parts.append(message)
+    if code:
+        parts.append(f"code={code}")
+    if error_type:
+        parts.append(f"type={error_type}")
+    if not parts:
+        return f"HTTP {status} (unparseable body, {content_type or 'no content-type'})"
+    return f"HTTP {status} " + " ".join(parts)
 
 
 def _streaming_speech_should_retry(detail: str) -> bool:
@@ -531,15 +631,29 @@ def _streaming_speech_should_retry(detail: str) -> bool:
     return False
 
 
-async def _read_speech_error(response: httpx.Response) -> str:
-    """Read a failed speech response, including a streaming body."""
+async def _read_speech_error(
+    response: httpx.Response, input_text: str | None = None
+) -> str:
+    """Read a failed speech response, including a streaming body.
+
+    The decoded body is logged at debug level *after* redaction, so the words
+    being spoken never appear in the log even if Venice echoes them back.
+    """
     status = response.status_code
     content_type = response.headers.get("content-type", "")
     try:
         raw = await response.aread()
     except Exception:
         return f"HTTP {status}"
-    return _speech_error_detail(raw, content_type, status)
+    body = _decode_speech_body(raw)
+    if body:
+        _LOGGER.debug(
+            "Venice AI Speech API error body (redacted): %s",
+            _cap_speech_field(
+                _redact_speech_input(body, input_text), SPEECH_ERROR_BODY_LIMIT
+            ),
+        )
+    return _speech_error_detail(raw, content_type, status, input_text=input_text)
 
 
 def _speech_speed(speed: object) -> float:
@@ -608,7 +722,7 @@ class Speech:
             return audio_data
 
         except httpx.HTTPStatusError as err:
-            error_detail = await _read_speech_error(err.response)
+            error_detail = await _read_speech_error(err.response, input_text=text)
             _LOGGER.error(
                 "Venice AI Speech API HTTP error %s (model=%s voice=%s format=%s): %s",
                 err.response.status_code,
@@ -696,7 +810,7 @@ class Speech:
             self.client.metrics.record_error(network_err)
             raise network_err from err
         except httpx.HTTPStatusError as err:
-            error_detail = await _read_speech_error(err.response)
+            error_detail = await _read_speech_error(err.response, input_text=text)
             _LOGGER.error(
                 "Venice AI Speech API HTTP error %s (model=%s voice=%s format=%s streaming=True): %s",
                 err.response.status_code,
