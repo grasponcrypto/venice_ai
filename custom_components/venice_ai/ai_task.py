@@ -13,7 +13,14 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .ai_task_support import chat_messages_from_log, option_float, option_int
+from .ai_task_support import (
+    append_structure_instruction,
+    chat_messages_from_log,
+    option_float,
+    option_int,
+    parse_structured_response,
+    venice_response_format,
+)
 from .client import VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
@@ -148,6 +155,8 @@ else:
         ) -> ai_task.GenDataTaskResult:
             """Internal implementation of generate data task."""
             messages = chat_messages_from_log(chat_log.content, task.instructions)
+            append_structure_instruction(messages, task.structure)
+            response_format = venice_response_format(task.structure)
 
             if not messages or messages[-1].get("role") != "user":
                 raise HomeAssistantError("No user message found in chat log")
@@ -175,6 +184,7 @@ else:
                     temperature=temperature,
                     top_p=top_p,
                     venice_parameters=venice_parameters,
+                    response_format=response_format,
                 )
                 _LOGGER.debug(
                     "AI task request model=%s stream=%s roles=%s",
@@ -206,7 +216,7 @@ else:
                     )
 
                 try:
-                    data = json.loads(text)
+                    data = parse_structured_response(text)
                 except json.JSONDecodeError as err:
                     _LOGGER.error(
                         "Failed to parse JSON response: %s. Response: %s",

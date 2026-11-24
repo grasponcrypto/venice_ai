@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -28,6 +28,9 @@ class VeniceAICoordinatorData(TypedDict):
     audio_models: list[dict[str, Any]]
     image_models: list[dict[str, Any]]
     voices: list[str]
+    text_catalog_ok: NotRequired[bool]
+    tts_catalog_ok: NotRequired[bool]
+    asr_catalog_ok: NotRequired[bool]
 
 
 class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorData]):
@@ -58,12 +61,16 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             "audio_models": [],
             "image_models": [],
             "voices": [],
+            "text_catalog_ok": False,
+            "tts_catalog_ok": False,
+            "asr_catalog_ok": False,
         }
 
         try:
             text_models = await self.client.models.list(model_type="text")
             if isinstance(text_models, list):
                 data["text_models"] = text_models
+                data["text_catalog_ok"] = True
                 _LOGGER.debug("Coordinator fetched %d text models", len(text_models))
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching text models: %s", err)
@@ -86,6 +93,7 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                 for m in tts_models:
                     m["model_type"] = "tts"
                 data["audio_models"].extend(tts_models)
+                data["tts_catalog_ok"] = True
                 _LOGGER.debug("Coordinator fetched %d TTS models", len(tts_models))
                 # Extract voices from TTS model metadata.
                 # Venice AI returns voices under model_spec.voices (current API shape).
@@ -130,6 +138,7 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                 for m in asr_models:
                     m["model_type"] = "asr"
                 data["audio_models"].extend(asr_models)
+                data["asr_catalog_ok"] = True
                 _LOGGER.debug("Coordinator fetched %d ASR models", len(asr_models))
         except AuthenticationError as err:
             _LOGGER.error("Authentication error fetching ASR models: %s", err)

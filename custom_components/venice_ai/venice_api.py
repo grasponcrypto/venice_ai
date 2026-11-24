@@ -20,6 +20,7 @@ interchangeably.
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -43,6 +44,80 @@ class ChatParameters:
     top_p: float | None = None
     tools: list[dict[str, Any]] | None = None
     venice_parameters: dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
+
+
+@dataclass
+class InspectedToolCall:
+    """A tool call ready to invoke, or an error result to record instead."""
+
+    tool_name: str
+    call_id: str
+    arguments: dict[str, Any]
+    error: dict[str, str] | None = None
+
+
+def inspect_tool_call(raw: object) -> InspectedToolCall:
+    """Return a tool call that can run, or an error result the provider can match.
+
+    A missing id, a non-function call, a missing name, or arguments that are
+    not a JSON object cannot be invoked. The error still carries the call id
+    the assistant turn will replay, including an empty id, so the next request
+    has a tool result for every tool call.
+    """
+    if not isinstance(raw, dict):
+        return InspectedToolCall(
+            tool_name="unknown",
+            call_id="",
+            arguments={},
+            error={"error": "Malformed tool call"},
+        )
+    call_id = raw.get("id") if isinstance(raw.get("id"), str) else ""
+    func = raw.get("function")
+    call_type = raw.get("type", "function")
+    if not isinstance(func, dict) or call_type != "function" or not call_id:
+        name = func.get("name") if isinstance(func, dict) else None
+        return InspectedToolCall(
+            tool_name=name if isinstance(name, str) and name else "unknown",
+            call_id=call_id,
+            arguments={},
+            error={"error": "Malformed tool call"},
+        )
+    tool_name = func.get("name")
+    if not isinstance(tool_name, str) or not tool_name:
+        return InspectedToolCall(
+            tool_name="unknown",
+            call_id=call_id,
+            arguments={},
+            error={"error": "Tool call missing name"},
+        )
+    raw_args = func.get("arguments", "{}")
+    if isinstance(raw_args, str):
+        try:
+            parsed = json.loads(raw_args) if raw_args else {}
+        except json.JSONDecodeError:
+            return InspectedToolCall(
+                tool_name=tool_name,
+                call_id=call_id,
+                arguments={},
+                error={"error": "Tool arguments were not valid JSON"},
+            )
+    elif isinstance(raw_args, dict):
+        parsed = raw_args
+    else:
+        parsed = None
+    if not isinstance(parsed, dict):
+        return InspectedToolCall(
+            tool_name=tool_name,
+            call_id=call_id,
+            arguments={},
+            error={"error": f"Tool {tool_name} arguments must be a JSON object"},
+        )
+    return InspectedToolCall(
+        tool_name=tool_name,
+        call_id=call_id,
+        arguments=parsed,
+    )
 
 
 @dataclass
@@ -182,6 +257,7 @@ class VeniceConversationService:
                 "top_p": params.top_p,
                 "tools": params.tools or None,
                 "venice_parameters": params.venice_parameters,
+                "response_format": params.response_format,
             },
             stream=False,
         )
@@ -232,6 +308,7 @@ class VeniceConversationService:
             top_p=params.top_p,
             tools=params.tools or None,
             venice_parameters=params.venice_parameters,
+            response_format=params.response_format,
             stream_options={"include_usage": True},
         ) as stream:
             async for chunk in stream:

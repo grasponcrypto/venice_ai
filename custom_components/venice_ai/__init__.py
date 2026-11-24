@@ -68,6 +68,7 @@ from .const import (
     RECOMMENDED_STT_MODEL,
 )
 from .coordinator import VeniceAIDataUpdateCoordinator
+from .model_catalog import catalog_fetched, model_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -394,25 +395,36 @@ def _async_on_coordinator_update(
 ) -> None:
     """Create or clear auth/API-availability repair issues based on coordinator state."""
     entry_id = entry.entry_id
-    ir.async_delete_issue(hass, DOMAIN, _ISSUE_AUTH.format(entry_id=entry_id))
-    ir.async_delete_issue(hass, DOMAIN, _ISSUE_API_DOWN.format(entry_id=entry_id))
-    ir.async_delete_issue(hass, DOMAIN, _ISSUE_RATE_LIMIT.format(entry_id=entry_id))
+    auth_issue = _ISSUE_AUTH.format(entry_id=entry_id)
+    api_issue = _ISSUE_API_DOWN.format(entry_id=entry_id)
+    rate_issue = _ISSUE_RATE_LIMIT.format(entry_id=entry_id)
+    registry = ir.async_get(hass)
+    auth_already_open = registry.async_get_issue(DOMAIN, auth_issue) is not None
 
     last_exc = coordinator.last_exception
     if last_exc is None:
+        ir.async_delete_issue(hass, DOMAIN, auth_issue)
+        ir.async_delete_issue(hass, DOMAIN, api_issue)
+        ir.async_delete_issue(hass, DOMAIN, rate_issue)
+        _update_model_issues(hass, entry)
         _LOGGER.debug(
             "Coordinator update succeeded for entry %s; connectivity issues cleared",
             entry_id,
         )
         return
 
+    ir.async_delete_issue(hass, DOMAIN, api_issue)
+    ir.async_delete_issue(hass, DOMAIN, rate_issue)
+
     cause = getattr(last_exc, "__cause__", None) or last_exc
 
     if isinstance(cause, AuthenticationError):
+        if auth_already_open:
+            return
         ir.async_create_issue(
             hass,
             DOMAIN,
-            _ISSUE_AUTH.format(entry_id=entry_id),
+            auth_issue,
             is_fixable=False,
             is_persistent=True,
             severity=IssueSeverity.ERROR,
@@ -422,15 +434,17 @@ def _async_on_coordinator_update(
         _LOGGER.warning(
             "Coordinator auth failure for entry %s — repair issue created", entry_id
         )
-        # CRIT-1: programmatically start the reauth flow so HA opens the
-        # re-authentication dialog without requiring the user to manually
-        # locate and act on the repair issue.
+        # Start reauth once per failure. A later success deletes the issue, so
+        # the next failure can open the dialog again.
         entry.async_start_reauth(hass)
-    elif isinstance(cause, RateLimitError):
+        return
+
+    ir.async_delete_issue(hass, DOMAIN, auth_issue)
+    if isinstance(cause, RateLimitError):
         ir.async_create_issue(
             hass,
             DOMAIN,
-            _ISSUE_RATE_LIMIT.format(entry_id=entry_id),
+            rate_issue,
             is_fixable=False,
             is_persistent=False,
             severity=IssueSeverity.WARNING,
@@ -444,7 +458,7 @@ def _async_on_coordinator_update(
         ir.async_create_issue(
             hass,
             DOMAIN,
-            _ISSUE_API_DOWN.format(entry_id=entry_id),
+            api_issue,
             is_fixable=False,
             is_persistent=False,
             severity=IssueSeverity.WARNING,
@@ -461,58 +475,53 @@ def _async_on_coordinator_update(
         )
 
 
-async def _async_create_model_issues(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
-    """Check the Venice AI configuration and create repair issues as needed."""
+def _update_model_issues(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Create or clear model repair issues from the latest catalog.
+
+    TTS and ASR are checked against their own model sets. A failed catalog
+    fetch leaves any existing issue alone instead of flagging the other
+    audio type. A later successful fetch clears an issue the model no longer
+    deserves.
+    """
     entry_id = entry.entry_id
     options = entry.options
-    runtime_data = entry.runtime_data
+    runtime_data = getattr(entry, "runtime_data", None)
     coordinator = getattr(runtime_data, "coordinator", None)
-
-    available_text_models: set[str] = set()
-    available_audio_models: set[str] = set()
-    if coordinator and coordinator.data:
-        available_text_models = {
-            m.get("id", "")
-            for m in coordinator.data.get("text_models", [])
-            if isinstance(m, dict)
-        }
-        available_audio_models = {
-            m.get("id", "")
-            for m in coordinator.data.get("audio_models", [])
-            if isinstance(m, dict)
-        }
-        _LOGGER.debug(
-            "Repair check using coordinator data: %d text models, %d audio models",
-            len(available_text_models),
-            len(available_audio_models),
-        )
+    data = coordinator.data if coordinator and coordinator.data else {}
+    if not isinstance(data, dict):
+        data = {}
+    text_models = data.get("text_models", [])
+    audio_models = data.get("audio_models", [])
 
     configured_models = {
         CONF_CHAT_MODEL: (
             options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
-            available_text_models,
+            model_ids(text_models),
+            catalog_fetched(data, "text_catalog_ok", text_models),
         ),
         CONF_TTS_MODEL: (
             options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
-            available_audio_models,
+            model_ids(audio_models, "tts"),
+            catalog_fetched(data, "tts_catalog_ok", audio_models, "tts"),
         ),
         CONF_STT_MODEL: (
             options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
-            available_audio_models,
+            model_ids(audio_models, "asr"),
+            catalog_fetched(data, "asr_catalog_ok", audio_models, "asr"),
         ),
     }
 
-    for model_key, (current_model, available_set) in configured_models.items():
+    for model_key, (current_model, available_set, catalog_ok) in configured_models.items():
+        deprecated_id = _ISSUE_DEPRECATED.format(
+            entry_id=entry_id, model_key=model_key
+        )
+        unavail_id = _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=model_key)
         if current_model in _DEPRECATED_MODELS:
-            issue_id = _ISSUE_DEPRECATED.format(
-                entry_id=entry_id, model_key=model_key
-            )
+            ir.async_delete_issue(hass, DOMAIN, unavail_id)
             ir.async_create_issue(
                 hass,
                 DOMAIN,
-                issue_id,
+                deprecated_id,
                 is_fixable=False,
                 is_persistent=False,
                 severity=IssueSeverity.WARNING,
@@ -529,14 +538,14 @@ async def _async_create_model_issues(
             )
             continue
 
-        if available_set and current_model not in available_set:
-            issue_id = _ISSUE_UNAVAIL.format(
-                entry_id=entry_id, model_key=model_key
-            )
+        ir.async_delete_issue(hass, DOMAIN, deprecated_id)
+        if not catalog_ok:
+            continue
+        if current_model not in available_set:
             ir.async_create_issue(
                 hass,
                 DOMAIN,
-                issue_id,
+                unavail_id,
                 is_fixable=False,
                 is_persistent=False,
                 severity=IssueSeverity.ERROR,
@@ -552,11 +561,13 @@ async def _async_create_model_issues(
                 model_key,
                 entry_id,
             )
+        else:
+            ir.async_delete_issue(hass, DOMAIN, unavail_id)
 
 
 async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Set up repair issues for a config entry."""
-    await _async_create_model_issues(hass, entry)
+    _update_model_issues(hass, entry)
 
     coordinator = entry.runtime_data.coordinator
 
